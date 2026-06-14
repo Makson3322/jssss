@@ -1,0 +1,36 @@
+<!-- START OF FILE public/obs.html -->
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1">
+  <title>OBS Overlay</title>
+  <link rel="stylesheet" href="/style.css">
+  <script src="https://cdn.jsdelivr.net/npm/qrcode-styling@1.9.2/lib/qrcode-styling.min.js"></script>
+  <style>
+    body, html, .app, .center, .viewport, .world, .asset, .asset-inner, .obs-only, .obs-only * {
+      background: transparent !important;
+      background-image: none !important;
+      background-color: transparent !important;
+      box-shadow: none !important;
+    }
+    body.obs-only { background: transparent !important; margin:0; padding:0; overflow:hidden; }
+    .obs-only .asset .name-tag, .obs-only .asset .handle, .obs-only .zone { display: none !important; }
+    .obs-only .asset.selected { border: none !important; box-shadow: none !important; }
+    .obs-only .asset { border: none !important; background: transparent !important; }
+  </style>
+</head>
+<body class="obs-only">
+  <div class="app">
+    <main class="center">
+      <div class="viewport" id="viewport">
+        <div class="world" id="world"></div>
+        <div class="selection-box" id="selectionBox"></div>
+      </div>
+    </main>
+  </div>
+  <script src="/socket.io/socket.io.js"></script>
+  <script src="/app.js"></script>
+</body>
+</html>
+<!-- END OF FILE public/obs.html -->

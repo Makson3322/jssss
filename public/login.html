@@ -1,0 +1,48 @@
+<!-- START OF FILE public/login.html -->
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Вход — Poltergeist</title>
+  <style>
+    *{box-sizing:border-box}
+    body{background:#0b0b10;display:flex;justify-content:center;align-items:center;height:100vh;font-family:system-ui;margin:0}
+    .login-card{background:#101018;border:1px solid #2b2b38;border-radius:24px;padding:40px;width:360px}
+    h2{color:#39ff14;text-align:center}
+    input{width:100%;background:#040406;border:1px solid #292935;color:#e8e8f0;padding:12px;border-radius:12px;margin-bottom:16px}
+    button{width:100%;background:linear-gradient(180deg,#7b2cbf,#4a1a73);border:none;padding:12px;border-radius:12px;font-weight:bold;cursor:pointer;color:white}
+    .error{color:#ff5588;margin-top:12px;text-align:center}
+  </style>
+</head>
+<body>
+<div class="login-card">
+  <h2>⚡ POLTERGEIST</h2>
+  <input type="text" id="username" placeholder="Логин" autocomplete="off">
+  <input type="password" id="password" placeholder="Пароль" autocomplete="new-password">
+  <button id="loginBtn">Войти</button>
+  <div id="errorMsg" class="error"></div>
+</div>
+<script>
+  const loginAction = async () => {
+    const username = document.getElementById('username').value.trim();
+    const password = document.getElementById('password').value;
+    if(!username || !password) return document.getElementById('errorMsg').innerText = 'Заполните оба поля';
+    const res = await fetch('/login', { method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify({username,password}) });
+    const data = await res.json();
+    if(res.ok) location.href = '/admin.html';
+    else document.getElementById('errorMsg').innerText = data.error || 'Ошибка входа';
+  };
+
+  document.getElementById('loginBtn').onclick = loginAction;
+
+  // Отправка формы по нажатию Enter
+  document.querySelectorAll('input').forEach(input => {
+    input.addEventListener('keydown', (e) => {
+      if (e.key === 'Enter') loginAction();
+    });
+  });
+</script>
+</body>
+</html>
+<!-- END OF FILE public/login.html -->
