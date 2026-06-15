@@ -778,14 +778,12 @@ const state = {
     if (['browser','image','video','mediashare'].includes(obj.type)) obj.src = normalizeUrl($('#inspUrl')?.value || '');
     if (obj.type === 'qr') { obj.qrText = String($('#inspText')?.value || '').trim(); obj.text = obj.qrText; } else { obj.text = $('#inspText')?.value || ''; }
 
-    // локально обновляем мгновенно
-    setObject(obj.id, { left: obj.left, top: obj.top, width: obj.width, height: obj.height, angle: obj.angle, opacity: obj.opacity, src: obj.src, text: obj.text, qrText: obj.qrText }, false);
-
-    const now = performance.now();
-    if (now - lastInspectorSyncAt > 80) {
-      lastInspectorSyncAt = now;
-      setObject(obj.id, { left: obj.left, top: obj.top, width: obj.width, height: obj.height, angle: obj.angle, opacity: obj.opacity, src: obj.src, text: obj.text, qrText: obj.qrText }, true);
-    }
+    // Локально обновляем сразу и сразу же отправляем в OBS/сервер.
+    setObject(
+      obj.id,
+      { left: obj.left, top: obj.top, width: obj.width, height: obj.height, angle: obj.angle, opacity: obj.opacity, src: obj.src, text: obj.text, qrText: obj.qrText },
+      true
+    );
   }
 
   function timerAction(action) {
