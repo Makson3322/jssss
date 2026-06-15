@@ -12,6 +12,7 @@
   const socket = io(location.origin, { transports: ['websocket'] });
 
   let lastRealtimeEmit = 0;
+let lastInspectorSyncAt = 0;
 
 const state = {
     room, role, connected: false,
@@ -580,6 +581,10 @@ const state = {
     const obj = state.objects[id];
     if (!obj) return null;
     Object.assign(obj, patch);
+    if (emit && state.role === 'admin') {
+      obj.rev = (Number(obj.rev) || 0) + 1;
+      patch.rev = obj.rev;
+    }
     buildAssetElement(obj);
     renderInspector();
     if (emit && state.role === 'admin') socket.emit('update_element', obj);
@@ -733,7 +738,15 @@ const state = {
     obj.angle = Number($('#inspAngle')?.value || 0); obj.opacity = Math.max(0, Math.min(1, Number($('#inspOpacity')?.value || 1)));
     if (['browser','image','video','mediashare'].includes(obj.type)) obj.src = normalizeUrl($('#inspUrl')?.value || '');
     if (obj.type === 'qr') { obj.qrText = String($('#inspText')?.value || '').trim(); obj.text = obj.qrText; } else { obj.text = $('#inspText')?.value || ''; }
-    setObject(obj.id, { left: obj.left, top: obj.top, width: obj.width, height: obj.height, angle: obj.angle, opacity: obj.opacity, src: obj.src, text: obj.text, qrText: obj.qrText }, true);
+
+    // локально обновляем мгновенно, а сеть не заспамливаем слишком часто
+    setObject(obj.id, { left: obj.left, top: obj.top, width: obj.width, height: obj.height, angle: obj.angle, opacity: obj.opacity, src: obj.src, text: obj.text, qrText: obj.qrText }, false);
+
+    const now = performance.now();
+    if (now - lastInspectorSyncAt > 40) {
+      lastInspectorSyncAt = now;
+      setObject(obj.id, { left: obj.left, top: obj.top, width: obj.width, height: obj.height, angle: obj.angle, opacity: obj.opacity, src: obj.src, text: obj.text, qrText: obj.qrText }, true);
+    }
   }
 
   function timerAction(action) {
@@ -824,7 +837,7 @@ const state = {
       obj.top = Math.round(state.drag.startObj.top + (pt.y - state.drag.start.y));
       setObject(obj.id, { left: obj.left, top: obj.top }, false);
       const now = performance.now();
-      if (now - lastRealtimeEmit > 16) {
+      if (now - lastRealtimeEmit > 32) {
         lastRealtimeEmit = now;
         socket.emit('update_element', obj);
       }
@@ -1133,8 +1146,18 @@ const state = {
   socket.on('connect', () => { state.connected = true; });
   socket.on('room_state', syncRoomState);
   socket.on('meta_updated', (meta) => { state.meta = meta; state.resolution = meta.resolution; renderLists(); renderInspector(); });
-  socket.on('element_added', (obj) => { state.objects[obj.id] = normalizeObject(obj); buildAssetElement(state.objects[obj.id]); renderAll(); flashElement(obj.id); });
+  socket.on('element_added', (obj) => {
+    const next = normalizeObject(obj);
+    const cur = state.objects[next.id];
+    if (cur && Number(cur.rev || 0) > Number(next.rev || 0)) return;
+    state.objects[next.id] = next;
+    buildAssetElement(state.objects[next.id]);
+    renderAll();
+    flashElement(next.id);
+  });
   socket.on('element_updated', (obj) => {
+    const cur = state.objects[obj.id];
+    if (cur && Number(cur.rev || 0) > Number(obj.rev || 0)) return;
     state.objects[obj.id] = normalizeObject({ ...(state.objects[obj.id] || {}), ...obj });
     const el = assetEl(obj.id);
     if(el) { applyAssetStyle(el, state.objects[obj.id]); const inner = el.querySelector('.asset-inner'); if(inner) renderAssetContent(state.objects[obj.id], inner); flashElement(obj.id); }

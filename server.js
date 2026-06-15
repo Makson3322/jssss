@@ -238,6 +238,7 @@ function normalizeObject(input) {
   o.locked = !!o.locked;
   o.visible = o.visible !== false;
   o.zIndex = Number(o.zIndex) || 0;
+  o.rev = Number(o.rev) || 0;
   o.color = String(o.color || '#ffffff');
   o.bg = String(o.bg || 'rgba(0,0,0,.2)');
   o.borderColor = String(o.borderColor || '#7b2cbf');
@@ -294,7 +295,7 @@ io.on('connection', (socket) => {
   socket.on('add_element', (payload, ack) => {
     if (!canModify()) return;
     const state = ensureRoom(currentRoom);
-    const obj = normalizeObject(payload);
+    const obj = normalizeObject({ ...payload, rev: Number(payload?.rev) || 0 });
     state.objects[obj.id] = obj;
     socket.broadcast.to(currentRoom).emit('element_added', clone(obj));
     if (typeof ack === 'function') ack({ ok: true, object: clone(obj) });
@@ -304,7 +305,11 @@ io.on('connection', (socket) => {
     const state = ensureRoom(currentRoom);
     const id = String(payload.id || '');
     if (!state.objects[id]) return;
-    const merged = normalizeObject({ ...state.objects[id], ...payload, id });
+    const current = state.objects[id];
+    const incomingRev = Number(payload.rev) || 0;
+    const currentRev = Number(current.rev) || 0;
+    const nextRev = Math.max(currentRev, incomingRev);
+    const merged = normalizeObject({ ...current, ...payload, id, rev: nextRev });
     state.objects[id] = merged;
     socket.broadcast.to(currentRoom).emit('element_updated', clone(merged));
     if (typeof ack === 'function') ack({ ok: true, object: clone(merged) });
