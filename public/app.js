@@ -167,6 +167,13 @@ const state = {
     return `https://${url.replace(/^\/*/, '')}`;
   }
 
+  
+  function youtubeEmbedUrl(url){
+    const s=String(url||'');
+    const a=s.match(/(?:youtu\.be\/|v=|embed\/)([A-Za-z0-9_-]{11})/);
+    return a?`https://www.youtube.com/embed/${a[1]}?autoplay=1&mute=1&loop=1&playlist=${a[1]}`:null;
+  }
+
   function currentWorldHeight() {
     return state.resolution.h * (state.role === 'admin' ? 2 : 1);
   }
@@ -453,6 +460,15 @@ const state = {
       }
       case 'video': {
         if (obj.src) {
+          const yt=youtubeEmbedUrl(obj.src);
+          if(yt){
+            const frame=document.createElement('iframe');
+            frame.src=yt;
+            frame.allow='autoplay; encrypted-media';
+            frame.style.cssText='width:100%;height:100%;border:none;';
+            inner.appendChild(frame);
+            break;
+          }
           const video = document.createElement('video');
           video.src = normalizeUrl(obj.src);
           video.autoplay = true;
@@ -461,12 +477,14 @@ const state = {
           video.playsInline = true;
           video.webkitPlaysInline = true;
           video.preload = 'auto';
+          video.load();
           video.controls = false;
           video.crossOrigin = 'anonymous';
           video.style.width = '100%';
           video.style.height = '100%';
           video.style.objectFit = 'contain';
           video.style.display = 'block';
+          video.style.background='#000';
           video.addEventListener('loadedmetadata', () => video.play().catch(() => {}), { once: true });
           video.addEventListener('canplay', () => video.play().catch(() => {}), { once: true });
           video.addEventListener('loadeddata', () => video.play().catch(() => {}), { once: true });
