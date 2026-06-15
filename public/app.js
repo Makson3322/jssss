@@ -33,6 +33,75 @@
   const layerPill = $('#layerPill');
   const zoomPill = $('#zoomPill');
 
+  function assetEl(id) {
+    if (!world) return null;
+    try {
+      return world.querySelector(`.asset[data-id="${String(id)}"]`);
+    } catch {
+      return Array.from(world.querySelectorAll('.asset')).find(el => el?.dataset?.id === String(id)) || null;
+    }
+  }
+
+  function applyAssetStyle(el, obj) {
+    if (!el || !obj) return;
+    el.style.left = `${Math.round(obj.left || 0)}px`;
+    el.style.top = `${Math.round(obj.top || 0)}px`;
+    el.style.width = `${Math.round(Math.max(16, obj.width || 320))}px`;
+    el.style.height = `${Math.round(Math.max(16, obj.height || 180))}px`;
+    el.style.opacity = String(Math.max(0, Math.min(1, obj.opacity ?? 1)));
+    el.style.zIndex = String(Number.isFinite(+obj.zIndex) ? +obj.zIndex : 10 + Math.round(obj.left || 0));
+    el.style.transform = `rotate(${Number(obj.angle || 0)}deg)`;
+  }
+
+  function createPlaceholderDataUrl(label = 'IMAGE') {
+    const safe = String(label || 'IMAGE').replace(/[<>&"]/g, '');
+    const svg = `
+      <svg xmlns="http://www.w3.org/2000/svg" width="800" height="450" viewBox="0 0 800 450">
+        <defs>
+          <linearGradient id="g" x1="0" y1="0" x2="1" y2="1">
+            <stop offset="0%" stop-color="#1d1d27"/>
+            <stop offset="100%" stop-color="#0b0b10"/>
+          </linearGradient>
+        </defs>
+        <rect width="800" height="450" rx="28" fill="url(#g)"/>
+        <rect x="24" y="24" width="752" height="402" rx="22" fill="none" stroke="#39ff14" stroke-opacity="0.45" stroke-width="4" stroke-dasharray="16 14"/>
+        <text x="400" y="215" font-family="Arial, Helvetica, sans-serif" font-size="48" text-anchor="middle" fill="#39ff14" font-weight="700">${safe}</text>
+        <text x="400" y="270" font-family="Arial, Helvetica, sans-serif" font-size="20" text-anchor="middle" fill="#ffffff" fill-opacity="0.7">No source provided</text>
+      </svg>`;
+    return `data:image/svg+xml;charset=UTF-8,${encodeURIComponent(svg)}`;
+  }
+
+  function qrNode(text) {
+    const wrap = document.createElement('div');
+    wrap.style.cssText = 'width:100%;height:100%;display:flex;align-items:center;justify-content:center;padding:12px;background:#fff;color:#111;overflow:hidden;';
+    const inner = document.createElement('div');
+    inner.style.cssText = 'width:100%;height:100%;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:8px;text-align:center;border:2px solid #111;border-radius:14px;padding:10px;';
+    const badge = document.createElement('div');
+    badge.style.cssText = 'width:140px;height:140px;border-radius:12px;background:repeating-linear-gradient(90deg,#111 0 12px,#fff 12px 24px),repeating-linear-gradient(#111 0 12px,#fff 12px 24px);background-blend-mode:multiply;opacity:.88;';
+    const txt = document.createElement('div');
+    txt.style.cssText = 'font-size:11px;line-height:1.25;color:#111;word-break:break-word;';
+    txt.textContent = text ? String(text) : 'QR';
+    inner.appendChild(badge);
+    inner.appendChild(txt);
+    wrap.appendChild(inner);
+    return wrap;
+  }
+
+  function getTimerRemaining(obj) {
+    if (!obj) return 0;
+    if (obj.timerStatus === 'running' && obj.endsAt) return Math.max(0, Number(obj.endsAt) - Date.now());
+    return Math.max(0, Number(obj.timerRemaining ?? obj.timerDuration ?? 0));
+  }
+
+  function formatTimer(obj) {
+    const total = Math.floor(getTimerRemaining(obj) / 1000);
+    const h = Math.floor(total / 3600);
+    const m = Math.floor((total % 3600) / 60);
+    const s = total % 60;
+    const parts = h > 0 ? [h, String(m).padStart(2, '0'), String(s).padStart(2, '0')] : [m, String(s).padStart(2, '0')];
+    return parts.join(':');
+  }
+
   const spawnDefs = [
     ['text', '📝 New text'], ['shape', '🟦 Shape'], ['image', '🖼 Image'],
     ['browser', '🌐 Browser'], ['qr', '📱 QR code'], ['timer', '⏱ Timer'],
