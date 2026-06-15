@@ -455,9 +455,11 @@ const state = {
           video.style.display = 'block';
           video.addEventListener('loadedmetadata', () => video.play().catch(() => {}), { once: true });
           video.addEventListener('canplay', () => video.play().catch(() => {}), { once: true });
+          video.addEventListener('loadeddata', () => video.play().catch(() => {}), { once: true });
           inner.appendChild(video);
           // Best-effort start immediately
           Promise.resolve().then(() => video.play().catch(() => {}));
+          setTimeout(() => { video.play().catch(() => {}); }, 50);
         } else inner.textContent = 'VIDEO';
         break;
       }
@@ -624,7 +626,7 @@ const state = {
     const el = assetEl(id);
     if (el) syncAssetView(el, obj, prev);
     renderInspector();
-    if (emit && state.role === 'admin') socket.emit('update_element', obj);
+    if (emit && state.role === 'admin') socket.emit('update_element', { ...obj });
     return obj;
   }
 
@@ -772,18 +774,19 @@ const state = {
 
   function updateSelectedFromInputs() {
     const obj = state.objects[[...state.selected][0]]; if (!obj) return;
-    obj.left = Number($('#inspX')?.value || 0); obj.top = Number($('#inspY')?.value || 0);
-    obj.width = Math.max(16, Number($('#inspW')?.value || 16)); obj.height = Math.max(16, Number($('#inspH')?.value || 16));
-    obj.angle = Number($('#inspAngle')?.value || 0); obj.opacity = Math.max(0, Math.min(1, Number($('#inspOpacity')?.value || 1)));
-    if (['browser','image','video','mediashare'].includes(obj.type)) obj.src = normalizeUrl($('#inspUrl')?.value || '');
-    if (obj.type === 'qr') { obj.qrText = String($('#inspText')?.value || '').trim(); obj.text = obj.qrText; } else { obj.text = $('#inspText')?.value || ''; }
+    const payload = {
+      left: Number($('#inspX')?.value || 0),
+      top: Number($('#inspY')?.value || 0),
+      width: Math.max(16, Number($('#inspW')?.value || 16)),
+      height: Math.max(16, Number($('#inspH')?.value || 16)),
+      angle: Number($('#inspAngle')?.value || 0),
+      opacity: Math.max(0, Math.min(1, Number($('#inspOpacity')?.value || 1)))
+    };
+    if (['browser','image','video','mediashare'].includes(obj.type)) payload.src = normalizeUrl($('#inspUrl')?.value || '');
+    if (obj.type === 'qr') { payload.qrText = String($('#inspText')?.value || '').trim(); payload.text = payload.qrText; } else { payload.text = $('#inspText')?.value || ''; }
 
     // Локально обновляем сразу и сразу же отправляем в OBS/сервер.
-    setObject(
-      obj.id,
-      { left: obj.left, top: obj.top, width: obj.width, height: obj.height, angle: obj.angle, opacity: obj.opacity, src: obj.src, text: obj.text, qrText: obj.qrText },
-      true
-    );
+    setObject(obj.id, payload, true);
   }
 
   function timerAction(action) {
@@ -1154,9 +1157,17 @@ const state = {
     } catch(e) { console.error('Error moderatorModal:', e); }
 
     try {
+      const inspectorHandler = (e) => {
+        const id = e.target && e.target.id;
+        if (id && INSPECTOR_FIELDS.includes(id)) updateSelectedFromInputs();
+      };
+      document.addEventListener('input', inspectorHandler, true);
+      document.addEventListener('change', inspectorHandler, true);
+      document.addEventListener('keyup', inspectorHandler, true);
       $$('#inspX,#inspY,#inspW,#inspH,#inspAngle,#inspOpacity,#inspText,#inspUrl').forEach(el => {
         el?.addEventListener('input', updateSelectedFromInputs);
         el?.addEventListener('change', updateSelectedFromInputs);
+        el?.addEventListener('keyup', updateSelectedFromInputs);
       });
     } catch(e) { console.error('Error inspector inputs:', e); }
 
@@ -1190,6 +1201,7 @@ const state = {
     if (cur && Number(cur.rev || 0) > Number(next.rev || 0)) return;
     state.objects[next.id] = next;
     buildAssetElement(state.objects[next.id]);
+    if (state.role === 'admin') renderSelection();
     flashElement(next.id);
   });
   socket.on('element_updated', (obj) => {

@@ -297,7 +297,7 @@ io.on('connection', (socket) => {
     const state = ensureRoom(currentRoom);
     const obj = normalizeObject({ ...payload, rev: Number(payload?.rev) || 0 });
     state.objects[obj.id] = obj;
-    socket.broadcast.to(currentRoom).emit('element_added', clone(obj));
+    io.to(currentRoom).emit('element_added', clone(obj));
     if (typeof ack === 'function') ack({ ok: true, object: clone(obj) });
   });
   socket.on('update_element', (payload, ack) => {
@@ -311,7 +311,7 @@ io.on('connection', (socket) => {
     const nextRev = Math.max(currentRev, incomingRev);
     const merged = normalizeObject({ ...current, ...payload, id, rev: nextRev });
     state.objects[id] = merged;
-    socket.broadcast.to(currentRoom).emit('element_updated', clone(merged));
+    io.to(currentRoom).emit('element_updated', clone(merged));
     if (typeof ack === 'function') ack({ ok: true, object: clone(merged) });
   });
   socket.on('remove_element', (payload, ack) => {
