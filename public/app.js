@@ -513,8 +513,8 @@
     if (state.spawnBusy) return null;
     state.spawnBusy = true;
     const h = state.resolution.h;
-    const baseY = h + 120 + Math.random() * 180;
-    const baseX = 150 + Math.random() * Math.max(160, state.resolution.w - 500);
+    const baseY = Math.round(opts.top ?? (120 + Math.random() * Math.max(160, h - 420)));
+    const baseX = Math.round(opts.left ?? (150 + Math.random() * Math.max(160, state.resolution.w - 500)));
     const common = {
       id: uid(), type, left: Math.round(opts.left ?? baseX), top: Math.round(opts.top ?? baseY),
       width: Math.round(opts.width ?? 420), height: Math.round(opts.height ?? 240), angle: 0,
