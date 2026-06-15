@@ -55,12 +55,23 @@ const state = {
 
   function applyAssetStyle(el, obj) {
     if (!el || !obj) return;
-    el.style.left = `${Math.round(obj.left || 0)}px`;
-    el.style.top = `${Math.round(obj.top || 0)}px`;
+
+    const isMediaLike = ['image', 'video', 'browser', 'mediashare'].includes(String(obj.type || '').toLowerCase());
+    let left = Number(obj.left || 0);
+    let top = Number(obj.top || 0);
+
+    // In OBS overlay, media objects spawned in the non-stream/stage zone should still be visible.
+    // Project them into the visible area without mutating the saved coordinates.
+    if (state.role === 'obs' && isMediaLike && top >= state.resolution.h) {
+      top = top - state.resolution.h;
+    }
+
+    el.style.left = `${Math.round(left)}px`;
+    el.style.top = `${Math.round(top)}px`;
     el.style.width = `${Math.round(Math.max(16, obj.width || 320))}px`;
     el.style.height = `${Math.round(Math.max(16, obj.height || 180))}px`;
     el.style.opacity = String(Math.max(0, Math.min(1, obj.opacity ?? 1)));
-    el.style.zIndex = String(Number.isFinite(+obj.zIndex) ? +obj.zIndex : 10 + Math.round(obj.left || 0));
+    el.style.zIndex = String(Number.isFinite(+obj.zIndex) ? +obj.zIndex : 10 + Math.round(left));
     el.style.transform = `rotate(${Number(obj.angle || 0)}deg)`;
   }
 
@@ -79,7 +90,6 @@ const state = {
     if (tag) tag.textContent = `${(obj.name || obj.type).toUpperCase()} • L${obj.layer}`;
     const inner = el.querySelector('.asset-inner');
     if (!prev || contentKey(prev) !== contentKey(obj)) {
-      clearMediaMount(inner);
       renderAssetContent(obj, inner);
     }
     if (state.role === 'obs') {
@@ -155,195 +165,6 @@ const state = {
     if (/^https?:\/\//i.test(url)) return url;
     if (/^\/\//.test(url)) return `https:${url}`;
     return `https://${url.replace(/^\/*/, '')}`;
-  }
-
-  function isYouTubeUrl(url) {
-    const s = String(url || '').trim();
-    return /(?:youtube\.com|youtu\.be)/i.test(s);
-  }
-
-  function extractYouTubeId(url) {
-    const s = String(url || '').trim();
-    if (!s) return '';
-    try {
-      const u = new URL(s, location.href);
-      const host = u.hostname.replace(/^www\./i, '');
-      if (host === 'youtu.be') return u.pathname.replace(/^\//, '').split('/')[0] || '';
-      if (host.endsWith('youtube.com')) {
-        if (u.pathname === '/watch') return u.searchParams.get('v') || '';
-        const parts = u.pathname.split('/').filter(Boolean);
-        const idx = parts.indexOf('embed');
-        if (idx !== -1 && parts[idx + 1]) return parts[idx + 1];
-        const shortIdx = parts.indexOf('shorts');
-        if (shortIdx !== -1 && parts[shortIdx + 1]) return parts[shortIdx + 1];
-      }
-    } catch {}
-    const m = s.match(/(?:v=|youtu\.be\/|embed\/|shorts\/)([A-Za-z0-9_-]{6,})/i);
-    return m ? m[1] : '';
-  }
-
-  function makeYouTubeEmbedUrl(url) {
-    const id = extractYouTubeId(url);
-    if (!id) return 'about:blank';
-    const embed = new URL(`https://www.youtube-nocookie.com/embed/${encodeURIComponent(id)}`);
-    embed.searchParams.set('autoplay', '1');
-    embed.searchParams.set('mute', '1');
-    embed.searchParams.set('playsinline', '1');
-    embed.searchParams.set('controls', '1');
-    embed.searchParams.set('rel', '0');
-    embed.searchParams.set('modestbranding', '1');
-    embed.searchParams.set('iv_load_policy', '3');
-    return embed.toString();
-  }
-
-  function guessVideoMime(url) {
-    const clean = String(url || '').split('?')[0].split('#')[0].toLowerCase();
-    if (clean.endsWith('.webm')) return 'video/webm';
-    if (clean.endsWith('.ogv') || clean.endsWith('.ogg')) return 'video/ogg';
-    if (clean.endsWith('.mov')) return 'video/quicktime';
-    if (clean.endsWith('.m4v') || clean.endsWith('.mp4')) return 'video/mp4';
-    if (clean.endsWith('.m3u8')) return 'application/vnd.apple.mpegurl';
-    if (clean.endsWith('.mpd')) return 'application/dash+xml';
-    if (clean.endsWith('.mkv')) return 'video/x-matroska';
-    return '';
-  }
-
-  const _mediaLibs = { hls: null, dash: null };
-  function loadScriptOnce(src) {
-    return new Promise((resolve, reject) => {
-      const existing = [...document.scripts].find(s => s.src === src);
-      if (existing) {
-        if (existing.dataset.loaded === '1') return resolve();
-        existing.addEventListener('load', () => resolve(), { once: true });
-        existing.addEventListener('error', () => reject(new Error(`Failed to load ${src}`)), { once: true });
-        return;
-      }
-      const s = document.createElement('script');
-      s.src = src;
-      s.async = true;
-      s.crossOrigin = 'anonymous';
-      s.onload = () => { s.dataset.loaded = '1'; resolve(); };
-      s.onerror = () => reject(new Error(`Failed to load ${src}`));
-      document.head.appendChild(s);
-    });
-  }
-
-  async function attachAdaptiveVideo(video, src) {
-    const lower = String(src || '').toLowerCase();
-    try {
-      if (lower.includes('.m3u8')) {
-        if (window.Hls && window.Hls.isSupported()) {
-          const hls = new window.Hls({ enableWorker: true, lowLatencyMode: true, backBufferLength: 90 });
-          hls.loadSource(src);
-          hls.attachMedia(video);
-          _mediaLibs.hls = hls;
-          return true;
-        }
-        await loadScriptOnce('https://cdn.jsdelivr.net/npm/hls.js@1.5.15/dist/hls.min.js');
-        if (window.Hls && window.Hls.isSupported()) {
-          const hls = new window.Hls({ enableWorker: true, lowLatencyMode: true, backBufferLength: 90 });
-          hls.loadSource(src);
-          hls.attachMedia(video);
-          _mediaLibs.hls = hls;
-          return true;
-        }
-      }
-      if (lower.includes('.mpd')) {
-        if (!window.dashjs) {
-          await loadScriptOnce('https://cdn.jsdelivr.net/npm/dashjs@4.7.4/dist/dash.all.min.js');
-        }
-        if (window.dashjs && window.dashjs.MediaPlayer) {
-          const player = window.dashjs.MediaPlayer().create();
-          player.initialize(video, src, true);
-          _mediaLibs.dash = player;
-          return true;
-        }
-      }
-    } catch (e) {
-      console.warn('Adaptive video attach failed:', e);
-    }
-    return false;
-  }
-
-  function clearMediaMount(el) {
-    if (!el) return;
-    const old = el._mediaCleanup;
-    if (typeof old === 'function') {
-      try { old(); } catch {}
-    }
-    el._mediaCleanup = null;
-  }
-
-  function mountMediaPlayer(kind, src, mount, options = {}) {
-    if (!mount) return;
-    clearMediaMount(mount);
-    mount.innerHTML = '';
-
-    const url = String(src || '').trim();
-    if (!url) {
-      mount.textContent = kind === 'video' ? 'VIDEO' : 'MEDIA';
-      return;
-    }
-
-    if (isYouTubeUrl(url)) {
-      const iframe = document.createElement('iframe');
-      iframe.src = makeYouTubeEmbedUrl(url);
-      iframe.allow = 'autoplay; encrypted-media; picture-in-picture; fullscreen';
-      iframe.allowFullscreen = true;
-      iframe.referrerPolicy = 'strict-origin-when-cross-origin';
-      iframe.style.width = '100%';
-      iframe.style.height = '100%';
-      iframe.style.border = 'none';
-      iframe.style.display = 'block';
-      mount.appendChild(iframe);
-      return;
-    }
-
-    const video = document.createElement('video');
-    video.autoplay = true;
-    video.loop = options.loop ?? true;
-    video.muted = true;
-    video.playsInline = true;
-    video.preload = 'auto';
-    video.controls = options.controls ?? false;
-    video.crossOrigin = 'anonymous';
-    video.style.width = '100%';
-    video.style.height = '100%';
-    video.style.objectFit = 'contain';
-    video.style.display = 'block';
-
-    const mime = guessVideoMime(url);
-    if (!mime || mime === 'application/vnd.apple.mpegurl' || mime === 'application/dash+xml') {
-      video.src = url;
-      mount.appendChild(video);
-      if (mime === 'application/vnd.apple.mpegurl' || mime === 'application/dash+xml') {
-        attachAdaptiveVideo(video, url).then((ok) => {
-          if (!ok) video.play().catch(() => {});
-        });
-      }
-    } else {
-      const source = document.createElement('source');
-      source.src = normalizeUrl(url);
-      source.type = mime;
-      video.appendChild(source);
-      mount.appendChild(video);
-    }
-
-    video.addEventListener('loadedmetadata', () => video.play().catch(() => {}), { once: true });
-    video.addEventListener('loadeddata', () => video.play().catch(() => {}), { once: true });
-    video.addEventListener('canplay', () => video.play().catch(() => {}), { once: true });
-    mount._mediaCleanup = () => {
-      try { video.pause(); } catch {}
-      video.removeAttribute('src');
-      video.querySelectorAll('source').forEach(s => s.remove());
-      if (mount._hls && typeof mount._hls.destroy === 'function') {
-        try { mount._hls.destroy(); } catch {}
-      }
-      if (mount._dash && typeof mount._dash.reset === 'function') {
-        try { mount._dash.reset(); } catch {}
-      }
-    };
-    Promise.resolve().then(() => video.play().catch(() => {}));
   }
 
   function currentWorldHeight() {
@@ -595,20 +416,21 @@ const state = {
         inner.appendChild(codeContainer);
         break;
 
-      case 'mediashare': {
+      case 'mediashare':
         const msWrap = document.createElement('div');
         msWrap.style.cssText = `width:100%;height:100%;display:flex;flex-direction:column;background:#000;border-radius:${obj.radius || 10}px;overflow:hidden;position:relative;`;
         if (obj.src) {
-          mountMediaPlayer('video', obj.src, msWrap, { loop: true, controls: false });
+          const iframe = document.createElement('iframe');
+          iframe.src = normalizeUrl(obj.src);
+          msWrap.appendChild(iframe);
         } else {
           const placeholder = document.createElement('div');
           placeholder.style.cssText = `width:100%;height:100%;display:flex;flex-direction:column;align-items:center;justify-content:center;color:#ff0033;font-size:18px;font-weight:bold;gap:10px;text-align:center;padding:10px;`;
-          placeholder.innerHTML = `🎥 <span>Media Share Ready</span><span style="font-size:12px;color:#aaa;">Paste a video or YouTube URL</span>`;
+          placeholder.innerHTML = `🎥 <span>Media Share Ready</span><span style="font-size:12px;color:#aaa;">Enter Video/YouTube URL in properties</span>`;
           msWrap.appendChild(placeholder);
         }
         inner.appendChild(msWrap);
         break;
-      }
 
       case 'shape':
         const shape = document.createElement('div');
@@ -621,6 +443,7 @@ const state = {
         img.loading = 'eager';
         img.decoding = 'async';
         img.draggable = false;
+        img.crossOrigin = 'anonymous';
         img.style.width = '100%';
         img.style.height = '100%';
         img.style.objectFit = 'contain';
@@ -630,7 +453,35 @@ const state = {
       }
       case 'video': {
         if (obj.src) {
-          mountMediaPlayer('video', obj.src, inner, { loop: true, controls: false });
+          const video = document.createElement('video');
+          video.src = normalizeUrl(obj.src);
+          video.autoplay = true;
+          video.loop = true;
+          video.muted = true;
+          video.playsInline = true;
+          video.webkitPlaysInline = true;
+          video.preload = 'auto';
+          video.controls = false;
+          video.crossOrigin = 'anonymous';
+          video.style.width = '100%';
+          video.style.height = '100%';
+          video.style.objectFit = 'contain';
+          video.style.display = 'block';
+          video.addEventListener('loadedmetadata', () => video.play().catch(() => {}), { once: true });
+          video.addEventListener('canplay', () => video.play().catch(() => {}), { once: true });
+          video.addEventListener('loadeddata', () => video.play().catch(() => {}), { once: true });
+          video.addEventListener('error', () => {
+            // If the browser cannot play the source, show a visible fallback instead of a blank box.
+            inner.innerHTML = '';
+            const fallback = document.createElement('div');
+            fallback.style.cssText = 'width:100%;height:100%;display:flex;align-items:center;justify-content:center;flex-direction:column;gap:8px;padding:12px;text-align:center;color:#fff;background:rgba(0,0,0,.55);font-size:14px;';
+            fallback.innerHTML = '<strong>Видео не поддерживается браузером</strong><span style="font-size:12px;color:#bbb">Проверь прямую ссылку на файл или используй YouTube embed</span>';
+            inner.appendChild(fallback);
+          }, { once: true });
+          inner.appendChild(video);
+          // Best-effort start immediately
+          Promise.resolve().then(() => video.play().catch(() => {}));
+          setTimeout(() => { video.play().catch(() => {}); }, 50);
         } else inner.textContent = 'VIDEO';
         break;
       }
@@ -879,7 +730,8 @@ const state = {
 
   function renderObject(obj) {
     if (!obj || !obj.visible) return;
-    if (state.role === 'obs' && obj.top >= state.resolution.h) return;
+    const isMediaLike = ['image', 'video', 'browser', 'mediashare'].includes(String(obj.type || '').toLowerCase());
+    if (state.role === 'obs' && obj.top >= state.resolution.h && !isMediaLike) return;
     const el = assetEl(obj.id);
     if (el) syncAssetView(el, obj, obj);
     else buildAssetElement(obj);
@@ -887,7 +739,12 @@ const state = {
 
   function renderAll() {
     if (!world) return;
-    world.querySelectorAll('.asset').forEach(el => { const id = el.dataset.id; const obj = state.objects[id]; if (!obj || !obj.visible || (state.role === 'obs' && obj.top >= state.resolution.h)) el.remove(); });
+    world.querySelectorAll('.asset').forEach(el => {
+      const id = el.dataset.id;
+      const obj = state.objects[id];
+      const isMediaLike = obj && ['image', 'video', 'browser', 'mediashare'].includes(String(obj.type || '').toLowerCase());
+      if (!obj || !obj.visible || (state.role === 'obs' && obj.top >= state.resolution.h && !isMediaLike)) el.remove();
+    });
     Object.values(state.objects).forEach(obj => renderObject(obj));
     renderSelection(); renderLists(); applyView(); updateDynamicTimers();
   }
