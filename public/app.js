@@ -10,7 +10,9 @@
   // Подключаемся по веб-сокетам на хостинге Bothost
   const socket = io(location.origin, { transports: ['websocket'] });
 
-  const state = {
+  let lastRealtimeEmit = 0;
+
+const state = {
     room, role, connected: false,
     resolution: { w: 1920, h: 1080 },
     meta: { logs: [], scenes: {}, presets: {}, sounds: [], currentLayer: '1' },
@@ -806,7 +808,12 @@
       const obj = state.objects[state.drag.id]; if (!obj) return;
       obj.left = Math.round(state.drag.startObj.left + (pt.x - state.drag.start.x));
       obj.top = Math.round(state.drag.startObj.top + (pt.y - state.drag.start.y));
-      setObject(obj.id, { left: obj.left, top: obj.top }, true);
+      setObject(obj.id, { left: obj.left, top: obj.top }, false);
+      const now = performance.now();
+      if (now - lastRealtimeEmit > 16) {
+        lastRealtimeEmit = now;
+        socket.emit('update_element', obj);
+      }
     } else if (state.resize) {
       const obj = state.objects[state.resize.id]; if (!obj) return;
       const dx = pt.x - state.resize.start.x, dy = pt.y - state.resize.start.y;
