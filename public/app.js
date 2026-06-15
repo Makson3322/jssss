@@ -1,3 +1,4 @@
+// REALTIME_INPUT_FIX
 /* --- START OF FILE public/app.js --- */
 (() => {
   const $ = (s, r = document) => r.querySelector(s);
@@ -891,6 +892,8 @@ const state = {
   function onKeyUp(e) { if (e.code === 'Space') state.spaceDown = false; }
 
   function syncRoomState(roomState) {
+    const active=document.activeElement;
+    if(active && (active.tagName==='INPUT' || active.tagName==='TEXTAREA')) return;
     state.meta = roomState.meta || state.meta;
     state.resolution = state.meta.resolution || state.resolution;
     state.objects = {};
