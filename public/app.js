@@ -597,20 +597,20 @@ const state = {
   function createObjectByType(type, opts = {}) {
     if (state.spawnBusy) return null;
     state.spawnBusy = true;
-    // STARTING AREA
-    const STARTING_AREA = {
+    // STAGING AREA (non-stream zone)
+    const STAGING_AREA = {
       left: 120,
-      top: 120,
-      width: 900,
-      height: 500
+      top: (state.resolution.h || 1080) + 120,
+      width: Math.max(600, (state.resolution.w || 1920) - 240),
+      height: Math.max(260, (state.resolution.h || 1080) - 240)
     };
 
     const baseX = Math.round(
-      opts.left ?? (STARTING_AREA.left + STARTING_AREA.width / 2 - 210)
+      opts.left ?? (STAGING_AREA.left + STAGING_AREA.width / 2 - 210)
     );
 
     const baseY = Math.round(
-      opts.top ?? (STARTING_AREA.top + STARTING_AREA.height / 2 - 120)
+      opts.top ?? (STAGING_AREA.top + STAGING_AREA.height / 2 - 120)
     );
     const common = {
       id: uid(), type, left: Math.round(opts.left ?? baseX), top: Math.round(opts.top ?? baseY),
@@ -891,7 +891,13 @@ const state = {
 
   function onKeyDown(e) {
     if (e.code === 'Space') state.spaceDown = true;
-    if (state.role !== 'admin') return;
+    const active = document.activeElement;
+    const isTypingTarget = !!active && (
+      active.tagName === 'INPUT' ||
+      active.tagName === 'TEXTAREA' ||
+      active.isContentEditable
+    );
+    if (state.role !== 'admin' || isTypingTarget) return;
     const selected = [...state.selected];
     if (e.key === 'Delete' || e.key === 'Backspace') selected.forEach(id => removeObject(id));
     const step = e.shiftKey ? 20 : 5;
