@@ -64,6 +64,30 @@ const state = {
     el.style.transform = `rotate(${Number(obj.angle || 0)}deg)`;
   }
 
+  function contentKey(obj) {
+    if (!obj) return '';
+    return [
+      obj.type, obj.src, obj.text, obj.qrText, obj.bg, obj.color, obj.fontSize, obj.fontWeight,
+      obj.radius, obj.borderColor, obj.borderWidth, JSON.stringify(obj.items || []), JSON.stringify(obj.data || {})
+    ].join('|');
+  }
+
+  function syncAssetView(el, obj, prev = null) {
+    if (!el || !obj) return;
+    applyAssetStyle(el, obj);
+    const tag = el.querySelector('.name-tag');
+    if (tag) tag.textContent = `${(obj.name || obj.type).toUpperCase()} • L${obj.layer}`;
+    const inner = el.querySelector('.asset-inner');
+    if (!prev || contentKey(prev) !== contentKey(obj)) {
+      renderAssetContent(obj, inner);
+    }
+    if (state.role === 'obs') {
+      el.classList.remove('selected');
+      el.querySelectorAll('.handle').forEach(h => h.remove());
+      el.style.pointerEvents = 'none';
+    }
+  }
+
   function createPlaceholderDataUrl(label = 'IMAGE') {
     const safe = String(label || 'IMAGE').replace(/[<>&"]/g, '');
     const svg = `
@@ -402,21 +426,41 @@ const state = {
         shape.style.cssText = `width:100%;height:100%;background:${obj.bg || '#7b2cbf'};border-radius:${obj.radius || 10}px;border:${obj.borderWidth || 2}px solid ${obj.borderColor || '#fff'}`;
         inner.appendChild(shape);
         break;
-      case 'image':
+      case 'image': {
         const img = document.createElement('img');
         img.src = obj.src || createPlaceholderDataUrl('IMAGE');
-        img.style.width = '100%'; img.style.height = '100%'; img.style.objectFit = 'contain';
+        img.loading = 'eager';
+        img.decoding = 'async';
+        img.draggable = false;
+        img.style.width = '100%';
+        img.style.height = '100%';
+        img.style.objectFit = 'contain';
+        img.style.display = 'block';
         inner.appendChild(img);
         break;
-      case 'video':
+      }
+      case 'video': {
         if (obj.src) {
           const video = document.createElement('video');
           video.src = normalizeUrl(obj.src);
-          video.autoplay = true; video.loop = true; video.muted = true;
-          video.style.width = '100%'; video.style.height = '100%';
+          video.autoplay = true;
+          video.loop = true;
+          video.muted = true;
+          video.playsInline = true;
+          video.preload = 'auto';
+          video.controls = false;
+          video.style.width = '100%';
+          video.style.height = '100%';
+          video.style.objectFit = 'contain';
+          video.style.display = 'block';
+          video.addEventListener('loadedmetadata', () => video.play().catch(() => {}), { once: true });
+          video.addEventListener('canplay', () => video.play().catch(() => {}), { once: true });
           inner.appendChild(video);
+          // Best-effort start immediately
+          Promise.resolve().then(() => video.play().catch(() => {}));
         } else inner.textContent = 'VIDEO';
         break;
+      }
       case 'browser':
         const iframe = document.createElement('iframe');
         iframe.src = normalizeUrl(obj.src || 'about:blank');
@@ -464,16 +508,7 @@ const state = {
       world.appendChild(el);
       if (state.role === 'admin') el.addEventListener('pointerdown', onPointerDown);
     }
-    applyAssetStyle(el, obj);
-    const inner = el.querySelector('.asset-inner');
-    const tag = el.querySelector('.name-tag');
-    renderAssetContent(obj, inner);
-    if (tag) tag.textContent = `${(obj.name || obj.type).toUpperCase()} • L${obj.layer}`;
-    if (state.role === 'obs') {
-      el.classList.remove('selected');
-      el.querySelectorAll('.handle').forEach(h => h.remove());
-      el.style.pointerEvents = 'none';
-    }
+    syncAssetView(el, obj);
     return el;
   }
 
@@ -580,12 +615,14 @@ const state = {
   function setObject(id, patch, emit = false) {
     const obj = state.objects[id];
     if (!obj) return null;
+    const prev = { ...obj };
     Object.assign(obj, patch);
     if (emit && state.role === 'admin') {
       obj.rev = (Number(obj.rev) || 0) + 1;
       patch.rev = obj.rev;
     }
-    buildAssetElement(obj);
+    const el = assetEl(id);
+    if (el) syncAssetView(el, obj, prev);
     renderInspector();
     if (emit && state.role === 'admin') socket.emit('update_element', obj);
     return obj;
@@ -670,7 +707,9 @@ const state = {
   function renderObject(obj) {
     if (!obj || !obj.visible) return;
     if (state.role === 'obs' && obj.top >= state.resolution.h) return;
-    buildAssetElement(obj);
+    const el = assetEl(obj.id);
+    if (el) syncAssetView(el, obj, obj);
+    else buildAssetElement(obj);
   }
 
   function renderAll() {
@@ -739,11 +778,11 @@ const state = {
     if (['browser','image','video','mediashare'].includes(obj.type)) obj.src = normalizeUrl($('#inspUrl')?.value || '');
     if (obj.type === 'qr') { obj.qrText = String($('#inspText')?.value || '').trim(); obj.text = obj.qrText; } else { obj.text = $('#inspText')?.value || ''; }
 
-    // локально обновляем мгновенно, а сеть не заспамливаем слишком часто
+    // локально обновляем мгновенно
     setObject(obj.id, { left: obj.left, top: obj.top, width: obj.width, height: obj.height, angle: obj.angle, opacity: obj.opacity, src: obj.src, text: obj.text, qrText: obj.qrText }, false);
 
     const now = performance.now();
-    if (now - lastInspectorSyncAt > 40) {
+    if (now - lastInspectorSyncAt > 80) {
       lastInspectorSyncAt = now;
       setObject(obj.id, { left: obj.left, top: obj.top, width: obj.width, height: obj.height, angle: obj.angle, opacity: obj.opacity, src: obj.src, text: obj.text, qrText: obj.qrText }, true);
     }
@@ -837,7 +876,7 @@ const state = {
       obj.top = Math.round(state.drag.startObj.top + (pt.y - state.drag.start.y));
       setObject(obj.id, { left: obj.left, top: obj.top }, false);
       const now = performance.now();
-      if (now - lastRealtimeEmit > 32) {
+      if (now - lastRealtimeEmit > 50) {
         lastRealtimeEmit = now;
         socket.emit('update_element', obj);
       }
@@ -924,12 +963,13 @@ const state = {
   function onKeyUp(e) { if (e.code === 'Space') state.spaceDown = false; }
 
   function syncRoomState(roomState) {
-    const active=document.activeElement;
-    if(active && (active.tagName==='INPUT' || active.tagName==='TEXTAREA')) return;
+    const active = document.activeElement;
+    if (active && (active.tagName === 'INPUT' || active.tagName === 'TEXTAREA')) return;
     state.meta = roomState.meta || state.meta;
     state.resolution = state.meta.resolution || state.resolution;
-    state.objects = {};
-    if (roomState.objects) Object.values(roomState.objects).forEach(obj => { state.objects[obj.id] = normalizeObject(obj); });
+    const nextObjects = {};
+    if (roomState.objects) Object.values(roomState.objects).forEach(obj => { nextObjects[obj.id] = normalizeObject(obj); });
+    state.objects = nextObjects;
     renderAll();
   }
 
@@ -1152,16 +1192,19 @@ const state = {
     if (cur && Number(cur.rev || 0) > Number(next.rev || 0)) return;
     state.objects[next.id] = next;
     buildAssetElement(state.objects[next.id]);
-    renderAll();
     flashElement(next.id);
   });
   socket.on('element_updated', (obj) => {
-    const cur = state.objects[obj.id];
-    if (cur && Number(cur.rev || 0) > Number(obj.rev || 0)) return;
+    const prev = state.objects[obj.id] ? { ...state.objects[obj.id] } : null;
+    if (prev && Number(prev.rev || 0) > Number(obj.rev || 0)) return;
     state.objects[obj.id] = normalizeObject({ ...(state.objects[obj.id] || {}), ...obj });
     const el = assetEl(obj.id);
-    if(el) { applyAssetStyle(el, state.objects[obj.id]); const inner = el.querySelector('.asset-inner'); if(inner) renderAssetContent(state.objects[obj.id], inner); flashElement(obj.id); }
-    else buildAssetElement(state.objects[obj.id]);
+    if (el) {
+      syncAssetView(el, state.objects[obj.id], prev);
+      flashElement(obj.id);
+    } else {
+      buildAssetElement(state.objects[obj.id]);
+    }
     if(state.role === 'admin') renderSelection();
   });
   socket.on('element_removed', ({ id }) => { removeObject(id, false); renderAll(); });
