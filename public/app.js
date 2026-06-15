@@ -25,6 +25,13 @@ const state = {
     spawnBusy: false, netCounter: 0, _netTimer: null
   };
 
+  const INSPECTOR_FIELDS = ['inspX','inspY','inspW','inspH','inspAngle','inspOpacity','inspText','inspUrl','timerDurationInput'];
+  function isInspectorFieldFocused(id) {
+    const el = document.activeElement;
+    return !!el && el.id === id;
+  }
+
+
   let currentUsername = null;
   let currentRole = null;
 
@@ -504,19 +511,20 @@ const state = {
     empty?.classList.add('hidden'); body?.classList.remove('hidden');
     
     const inspType = $('#inspType'); if (inspType) inspType.textContent = obj.type;
-    const inspX = $('#inspX'); if (inspX) inspX.value = Math.round(obj.left);
-    const inspY = $('#inspY'); if (inspY) inspY.value = Math.round(obj.top);
-    const inspW = $('#inspW'); if (inspW) inspW.value = Math.round(obj.width);
-    const inspH = $('#inspH'); if (inspH) inspH.value = Math.round(obj.height);
-    const inspAngle = $('#inspAngle'); if (inspAngle) inspAngle.value = Math.round(obj.angle || 0);
-    const inspOpacity = $('#inspOpacity'); if (inspOpacity) inspOpacity.value = Number(obj.opacity ?? 1);
-    const inspText = $('#inspText'); if (inspText) inspText.value = obj.type === 'qr' ? (obj.qrText || obj.text || obj.src || '') : (obj.text || '');
-    const inspUrl = $('#inspUrl'); if (inspUrl) inspUrl.value = ['browser','image','video','mediashare'].includes(obj.type) ? (obj.src || '') : '';
+    const inspX = $('#inspX'); if (inspX && !isInspectorFieldFocused('inspX')) inspX.value = Math.round(obj.left);
+    const inspY = $('#inspY'); if (inspY && !isInspectorFieldFocused('inspY')) inspY.value = Math.round(obj.top);
+    const inspW = $('#inspW'); if (inspW && !isInspectorFieldFocused('inspW')) inspW.value = Math.round(obj.width);
+    const inspH = $('#inspH'); if (inspH && !isInspectorFieldFocused('inspH')) inspH.value = Math.round(obj.height);
+    const inspAngle = $('#inspAngle'); if (inspAngle && !isInspectorFieldFocused('inspAngle')) inspAngle.value = Math.round(obj.angle || 0);
+    const inspOpacity = $('#inspOpacity'); if (inspOpacity && !isInspectorFieldFocused('inspOpacity')) inspOpacity.value = Number(obj.opacity ?? 1);
+    const inspText = $('#inspText'); if (inspText && !isInspectorFieldFocused('inspText')) inspText.value = obj.type === 'qr' ? (obj.qrText || obj.text || obj.src || '') : (obj.text || '');
+    const inspUrl = $('#inspUrl'); if (inspUrl && !isInspectorFieldFocused('inspUrl')) inspUrl.value = ['browser','image','video','mediashare'].includes(obj.type) ? (obj.src || '') : '';
 
     const timerPanel = $('#timerPanel');
     if (obj.type === 'timer') {
+      const timerFocused = isInspectorFieldFocused('timerDurationInput');
       timerPanel?.classList.remove('hidden');
-      timerPanel.innerHTML = `
+      if (!timerFocused) timerPanel.innerHTML = `
         <div class="section-title" style="margin-top:12px"><span>Timer Controls</span></div>
         <table class="inspector-table" style="margin-bottom:8px">
           <tr>
@@ -545,6 +553,11 @@ const state = {
       const tPause = $('#timerPauseBtn'); if (tPause) tPause.onclick = () => timerAction('pause');
       const tStop = $('#timerStopBtn'); if (tStop) tStop.onclick = () => timerAction('stop');
       const tSet = $('#timerSetDurationBtn'); if (tSet) tSet.onclick = () => timerAction('set-duration');
+      const tDur = $('#timerDurationInput');
+      if (tDur) {
+        tDur.addEventListener('input', () => timerAction('set-duration'));
+        tDur.addEventListener('change', () => timerAction('set-duration'));
+      }
       const tAdd = $('#timerAdd10Btn'); if (tAdd) tAdd.onclick = () => timerAction('add10');
       const tSub = $('#timerSub10Btn'); if (tSub) tSub.onclick = () => timerAction('sub10');
     } else {
@@ -1084,7 +1097,10 @@ const state = {
     } catch(e) { console.error('Error moderatorModal:', e); }
 
     try {
-      $$('#inspX,#inspY,#inspW,#inspH,#inspAngle,#inspOpacity,#inspText,#inspUrl').forEach(el => el?.addEventListener('change', updateSelectedFromInputs));
+      $$('#inspX,#inspY,#inspW,#inspH,#inspAngle,#inspOpacity,#inspText,#inspUrl').forEach(el => {
+        el?.addEventListener('input', updateSelectedFromInputs);
+        el?.addEventListener('change', updateSelectedFromInputs);
+      });
     } catch(e) { console.error('Error inspector inputs:', e); }
 
     try {
