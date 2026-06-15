@@ -581,9 +581,21 @@
   function createObjectByType(type, opts = {}) {
     if (state.spawnBusy) return null;
     state.spawnBusy = true;
-    const h = state.resolution.h;
-    const baseY = Math.round(opts.top ?? (120 + Math.random() * Math.max(160, h - 420)));
-    const baseX = Math.round(opts.left ?? (150 + Math.random() * Math.max(160, state.resolution.w - 500)));
+    // STARTING AREA
+    const STARTING_AREA = {
+      left: 120,
+      top: 120,
+      width: 900,
+      height: 500
+    };
+
+    const baseX = Math.round(
+      opts.left ?? (STARTING_AREA.left + STARTING_AREA.width / 2 - 210)
+    );
+
+    const baseY = Math.round(
+      opts.top ?? (STARTING_AREA.top + STARTING_AREA.height / 2 - 120)
+    );
     const common = {
       id: uid(), type, left: Math.round(opts.left ?? baseX), top: Math.round(opts.top ?? baseY),
       width: Math.round(opts.width ?? 420), height: Math.round(opts.height ?? 240), angle: 0,
