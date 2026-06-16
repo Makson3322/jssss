@@ -23,7 +23,7 @@ const state = {
     zoom: 1, panX: 0, panY: 0, fitZoom: 1,
     isPanning: false, panStart: null, drag: null, rotate: null, resize: null,
     selecting: false, selectionRect: null, spaceDown: false, lockView: false,
-    spawnBusy: false, netCounter: 0, _netTimer: null
+    spawnBusy: false, netCounter: 0, _netTimer: null, localEdits: new Set()
   };
 
   const INSPECTOR_FIELDS = ['inspX','inspY','inspW','inspH','inspAngle','inspOpacity','inspText','inspUrl','timerDurationInput'];
@@ -96,7 +96,6 @@ const state = {
       el.classList.remove('selected');
       el.querySelectorAll('.handle').forEach(h => h.remove());
       el.style.pointerEvents = 'none';
-      el.style.visibility = (obj.top >= state.resolution.h) ? 'hidden' : 'visible';
     }
   }
 
@@ -753,18 +752,9 @@ const state = {
 
   function renderObject(obj) {
     if (!obj || !obj.visible) return;
-    const mediaLike = isMediaLikeObject(obj);
-    if (state.role === 'obs' && obj.top >= state.resolution.h) return;
     const el = assetEl(obj.id);
     if (el) syncAssetView(el, obj, obj);
     else buildAssetElement(obj);
-    if (state.role === 'obs' && mediaLike && obj.top < state.resolution.h) {
-      const el2 = assetEl(obj.id);
-      if (el2) {
-        el2.style.visibility = 'visible';
-        el2.style.opacity = String(Math.max(0, Math.min(1, obj.opacity ?? 1)));
-      }
-    }
   }
 
   function renderAll() {
@@ -772,7 +762,7 @@ const state = {
     world.querySelectorAll('.asset').forEach(el => {
       const id = el.dataset.id;
       const obj = state.objects[id];
-      if (!obj || !obj.visible || (state.role === 'obs' && obj.top >= state.resolution.h)) el.remove();
+      if (!obj || !obj.visible) el.remove();
     });
     Object.values(state.objects).forEach(obj => renderObject(obj));
     renderSelection(); renderLists(); applyView(); updateDynamicTimers();
@@ -875,7 +865,6 @@ const state = {
 
   function moveSelectedByScene(deltaY) {
     [...state.selected].forEach(id => { const obj = state.objects[id]; if (!obj) return; obj.top += deltaY; setObject(id, { top: obj.top }, true); });
-    renderAll();
   }
 
   function flashElement(id) {
@@ -898,11 +887,13 @@ const state = {
       
       // Поддержка 8-ми векторов изменения размера
       if (['br','tl','tr','bl','tc','bc','ml','mr'].includes(handle.dataset.handle)) { 
-        state.resize = { id, start: pt, handle: handle.dataset.handle, startObj: { ...obj } }; 
+        state.resize = { id, start: pt, handle: handle.dataset.handle, startObj: { ...obj } };
+        state.localEdits.add(id);
       }
       else if (handle.dataset.handle === 'rot') { 
         const cx = obj.left + obj.width/2, cy = obj.top + obj.height/2; 
-        state.rotate = { id, center: { x: cx, y: cy }, startAngle: obj.angle || 0, startMouseAngle: Math.atan2(pt.y-cy, pt.x-cx) }; 
+        state.rotate = { id, center: { x: cx, y: cy }, startAngle: obj.angle || 0, startMouseAngle: Math.atan2(pt.y-cy, pt.x-cx) };
+        state.localEdits.add(id);
       }
       e.preventDefault(); return;
     }
@@ -911,6 +902,7 @@ const state = {
       if (e.shiftKey) { if (state.selected.has(id)) state.selected.delete(id); else state.selected.add(id); renderSelection(); return; }
       selectOnly(id); if (obj.locked) return;
       state.drag = { id, start: pt, startObj: { left: obj.left, top: obj.top } };
+      state.localEdits.add(id);
       e.preventDefault(); return;
     }
     selectOnly(null);
@@ -934,7 +926,7 @@ const state = {
       obj.top = Math.round(state.drag.startObj.top + (pt.y - state.drag.start.y));
       setObject(obj.id, { left: obj.left, top: obj.top }, false);
       const now = performance.now();
-      const emitEvery = isMediaLikeObject(obj) ? 16 : 32;
+      const emitEvery = isMediaLikeObject(obj) ? 24 : 40;
       if (now - lastRealtimeEmit > emitEvery) {
         lastRealtimeEmit = now;
         socket.emit('update_element', { ...obj });
@@ -958,7 +950,7 @@ const state = {
       
       setObject(obj.id, { left: obj.left, top: obj.top, width: obj.width, height: obj.height }, true);
       const now = performance.now();
-      const emitEvery = isMediaLikeObject(obj) ? 16 : 32;
+      const emitEvery = isMediaLikeObject(obj) ? 24 : 40;
       if (now - lastRealtimeEmit > emitEvery) {
         lastRealtimeEmit = now;
         socket.emit('update_element', { ...obj });
@@ -989,9 +981,9 @@ const state = {
     if (state.role !== 'admin') return;
     selectionBox.style.display = 'none'; state.selecting = false; state.isPanning = false; state.selectionRect = null;
     if (viewport) viewport.style.cursor = 'default';
-    if (state.drag) { const obj = state.objects[state.drag.id]; if (obj) socket.emit('update_element', obj); state.drag = null; }
-    if (state.resize) { const obj = state.objects[state.resize.id]; if (obj) socket.emit('update_element', obj); state.resize = null; }
-    if (state.rotate) { const obj = state.objects[state.rotate.id]; if (obj) socket.emit('update_element', obj); state.rotate = null; }
+    if (state.drag) { const obj = state.objects[state.drag.id]; if (obj) socket.emit('update_element', { ...obj }); state.localEdits.delete(state.drag.id); state.drag = null; }
+    if (state.resize) { const obj = state.objects[state.resize.id]; if (obj) socket.emit('update_element', { ...obj }); state.localEdits.delete(state.resize.id); state.resize = null; }
+    if (state.rotate) { const obj = state.objects[state.rotate.id]; if (obj) socket.emit('update_element', { ...obj }); state.localEdits.delete(state.rotate.id); state.rotate = null; }
   }
 
   function onWheel(e) {
@@ -1269,6 +1261,7 @@ const state = {
     flashElement(next.id);
   });
   socket.on('element_updated', (obj) => {
+    if (state.role === 'admin' && state.localEdits.has(obj.id)) return;
     const prev = state.objects[obj.id] ? { ...state.objects[obj.id] } : null;
     if (prev && Number(prev.rev || 0) > Number(obj.rev || 0)) return;
     state.objects[obj.id] = normalizeObject({ ...(state.objects[obj.id] || {}), ...obj });
