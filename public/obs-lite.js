@@ -9,16 +9,17 @@
   const state = {
     resolution: { w: 1920, h: 1080 },
     meta: { currentLayer: '1' },
-    objects: {},
+    target: new Map(),
+    display: new Map(),
     hash: '',
     zoom: 1,
     panX: 0,
     panY: 0,
     socketReady: false,
-    pollTimer: null,
-    fallbackTimer: null,
+    connectedAt: 0,
     renderQueued: false,
-    pendingFullSync: false
+    frameTimer: null,
+    pollTimer: null
   };
 
   function normalizeUrl(input) {
@@ -68,6 +69,7 @@
     obj.items = Array.isArray(obj.items) ? obj.items : [];
     obj.activeIndex = Number(obj.activeIndex || 0);
     obj.qrText = String(obj.qrText ?? obj.text ?? obj.src ?? '');
+    obj.rev = Number(obj.rev || 0);
     return obj;
   }
 
@@ -134,7 +136,7 @@
         inner.appendChild(fallback);
       }, { once: true });
       inner.appendChild(video);
-      setTimeout(() => video.play().catch(() => {}), 30);
+      setTimeout(() => video.play().catch(() => {}), 16);
       return;
     }
 
@@ -156,109 +158,74 @@
   function ensureAsset(obj) {
     if (!obj || !obj.id) return null;
     let el = world.querySelector(`.asset[data-id="${CSS.escape(obj.id)}"]`);
-    const prev = el ? el._obj : null;
-
     if (!el) {
       el = document.createElement('div');
       el.className = 'asset';
       el.dataset.id = obj.id;
       el.innerHTML = '<div class="asset-inner"></div>';
       world.appendChild(el);
+      const display = { ...obj, _contentKey: '', _lastApplied: 0, _startTime: performance.now() };
+      state.display.set(obj.id, display);
     }
 
-    const changed = !prev || contentKey(prev) !== contentKey(obj);
-    el._obj = { ...obj };
+    const d = state.display.get(obj.id) || { ...obj, _contentKey: '' };
+    const prevKey = d._contentKey || '';
+    const nextKey = contentKey(obj);
+    d.target = { ...obj };
+    d._contentKey = nextKey;
+    if (!state.display.has(obj.id)) state.display.set(obj.id, d);
 
-    el.style.left = `${Math.round(obj.left)}px`;
-    el.style.top = `${Math.round(obj.top)}px`;
-    el.style.width = `${Math.round(obj.width)}px`;
-    el.style.height = `${Math.round(obj.height)}px`;
-    el.style.opacity = String(obj.opacity);
-    el.style.transform = `translate3d(0,0,0) rotate(${obj.angle || 0}deg)`;
-    el.style.visibility = (obj.visible && obj.top < state.resolution.h) ? 'visible' : 'hidden';
-    el.style.pointerEvents = 'none';
-    el.style.willChange = 'transform,left,top,width,height';
+    const current = d.current || { ...obj };
+    if (!d.current) {
+      d.current = { ...obj };
+    }
 
-    if (changed) {
+    if (prevKey !== nextKey) {
       renderAssetContent(obj, el.querySelector('.asset-inner'));
     }
 
+    el.style.pointerEvents = 'none';
+    el.style.willChange = 'transform,left,top,width,height';
     return el;
   }
 
   function removeAsset(id) {
     const el = world.querySelector(`.asset[data-id="${CSS.escape(String(id))}"]`);
     if (el) el.remove();
-    delete state.objects[String(id)];
+    state.display.delete(String(id));
+    state.target.delete(String(id));
   }
 
-  function applyFullState(roomState) {
-    if (!roomState) return;
+  function setTargetObjects(roomState) {
     state.meta = roomState.meta || state.meta;
     state.resolution = state.meta.resolution || state.resolution;
-
-    const nextObjects = {};
+    const next = new Map();
     Object.values(roomState.objects || {}).forEach((o) => {
       const obj = normalizeObject(o);
-      nextObjects[obj.id] = obj;
+      next.set(obj.id, obj);
     });
-    state.objects = nextObjects;
-
-    $$('.asset', world).forEach(el => {
-      if (!state.objects[el.dataset.id]) el.remove();
-    });
-
-    Object.values(state.objects).forEach((obj) => {
-      if (!obj.visible) return;
-      ensureAsset(obj);
-    });
+    state.target = next;
   }
 
-  function scheduleRender() {
-    if (state.renderQueued) return;
-    state.renderQueued = true;
-    requestAnimationFrame(() => {
-      state.renderQueued = false;
-      Object.values(state.objects).forEach(obj => {
-        if (!obj.visible) return;
-        ensureAsset(obj);
-      });
-    });
+  function applyRoomState(roomState) {
+    const hash = stableHash(roomState);
+    if (hash === state.hash) return false;
+    state.hash = hash;
+    setTargetObjects(roomState);
+    return true;
   }
 
-  function onRoomState(roomState) {
-    const h = stableHash(roomState);
-    if (h === state.hash) return;
-    state.hash = h;
-    applyFullState(roomState);
-  }
-
-  function upsertObject(obj) {
+  function syncTarget(obj) {
     const next = normalizeObject(obj);
-    const cur = state.objects[next.id];
-    state.objects[next.id] = next;
-
-    if (cur) {
-      const el = ensureAsset(next);
-      if (el) {
-        el._obj = { ...next };
-      }
-    } else {
-      ensureAsset(next);
-    }
-  }
-
-  function refreshObject(obj) {
-    if (!obj || !obj.id) return;
-    const next = normalizeObject(obj);
-    const cur = state.objects[next.id];
-    if (!cur || Number(next.rev || 0) >= Number(cur.rev || 0)) {
-      state.objects[next.id] = next;
+    const cur = state.target.get(next.id);
+    if (!cur || next.rev >= cur.rev) {
+      state.target.set(next.id, next);
       ensureAsset(next);
     }
   }
 
   function syncRemove(id) {
+    state.target.delete(String(id));
     removeAsset(id);
   }
 
@@ -267,21 +234,78 @@
       const res = await fetch(`/api/room-state?room=${encodeURIComponent(room)}`, { cache: 'no-store' });
       if (!res.ok) return;
       const roomState = await res.json();
-      const h = stableHash(roomState);
-      if (h === state.hash) return;
-      state.hash = h;
-      applyFullState(roomState);
+      applyRoomState(roomState);
     } catch {}
   }
 
-  function connectSocket() {
+  function ensureCurrentStyles(el, obj) {
+    el.style.left = `${Math.round(obj.left)}px`;
+    el.style.top = `${Math.round(obj.top)}px`;
+    el.style.width = `${Math.round(obj.width)}px`;
+    el.style.height = `${Math.round(obj.height)}px`;
+    el.style.opacity = String(obj.opacity);
+    el.style.transform = `translate3d(0,0,0) rotate(${obj.angle || 0}deg)`;
+    el.style.visibility = (obj.visible && obj.top < state.resolution.h) ? 'visible' : 'hidden';
+  }
+
+  function animate() {
+    const lerp = (a, b, t) => a + (b - a) * t;
+    const t = 0.24; // fast enough to feel real-time, smooth enough to prevent slideshow.
+
+    // Remove stale elements
+    for (const [id, display] of state.display.entries()) {
+      if (!state.target.has(id)) {
+        const el = world.querySelector(`.asset[data-id="${CSS.escape(id)}"]`);
+        if (el) el.remove();
+        state.display.delete(id);
+      }
+    }
+
+    for (const [id, target] of state.target.entries()) {
+      if (!target.visible) {
+        removeAsset(id);
+        continue;
+      }
+      const el = ensureAsset(target);
+      if (!el) continue;
+
+      const d = state.display.get(id) || { current: { ...target }, target: { ...target }, _contentKey: contentKey(target) };
+      if (!d.current) d.current = { ...target };
+      if (!d.target) d.target = { ...target };
+
+      const c = d.current;
+      c.left = Math.abs(c.left - target.left) < 0.5 ? target.left : lerp(c.left, target.left, t);
+      c.top = Math.abs(c.top - target.top) < 0.5 ? target.top : lerp(c.top, target.top, t);
+      c.width = Math.abs(c.width - target.width) < 0.5 ? target.width : lerp(c.width, target.width, t);
+      c.height = Math.abs(c.height - target.height) < 0.5 ? target.height : lerp(c.height, target.height, t);
+      c.opacity = Math.abs(c.opacity - target.opacity) < 0.01 ? target.opacity : lerp(c.opacity, target.opacity, t);
+      c.angle = Math.abs(c.angle - target.angle) < 0.1 ? target.angle : lerp(c.angle, target.angle, t);
+      c.visible = target.visible;
+      c.rev = target.rev;
+
+      ensureCurrentStyles(el, c);
+
+      const inner = el.querySelector('.asset-inner');
+      const nextKey = contentKey(target);
+      if (d._contentKey !== nextKey) {
+        d._contentKey = nextKey;
+        renderAssetContent(target, inner);
+      }
+
+      state.display.set(id, d);
+    }
+
+    requestAnimationFrame(animate);
+  }
+
+  function startSocket() {
     if (typeof io !== 'function') return null;
     const socket = io(location.origin, {
       transports: ['websocket', 'polling'],
       upgrade: true,
       reconnection: true,
       reconnectionAttempts: Infinity,
-      timeout: 20000
+      timeout: 15000
     });
 
     socket.on('connect', () => {
@@ -294,17 +318,25 @@
       state.socketReady = false;
     });
 
-    socket.on('room_state', onRoomState);
+    socket.on('room_state', (roomState) => {
+      const changed = applyRoomState(roomState);
+      if (changed) {
+        // Refresh display map with target objects, but do not recreate DOM every frame.
+        for (const [id, obj] of state.target.entries()) ensureAsset(obj);
+      }
+    });
+
     socket.on('meta_updated', (meta) => {
       state.meta = meta || state.meta;
       state.resolution = state.meta.resolution || state.resolution;
-      scheduleRender();
     });
-    socket.on('element_added', (obj) => upsertObject(obj));
-    socket.on('element_updated', (obj) => refreshObject(obj));
+
+    socket.on('element_added', (obj) => syncTarget(obj));
+    socket.on('element_updated', (obj) => syncTarget(obj));
     socket.on('element_removed', ({ id }) => syncRemove(id));
     socket.on('canvas_cleared', () => {
-      state.objects = {};
+      state.target.clear();
+      state.display.clear();
       $$('.asset', world).forEach(el => el.remove());
     });
 
@@ -325,15 +357,13 @@
   window.addEventListener('resize', fit);
 
   fit();
-  const socket = connectSocket();
-
+  startSocket();
   fetchState().catch(() => {});
+  requestAnimationFrame(animate);
+
+  // Fallback: only if socket is unavailable or disconnected.
   setInterval(() => {
     if (!state.socketReady) fetchState().catch(() => {});
-  }, 500);
+  }, 1000);
 
-  // Safety net: if socket emits updates but a browser source misses a frame, keep DOM in sync.
-  setInterval(() => {
-    if (state.socketReady) scheduleRender();
-  }, 1000 / 30);
 })();
