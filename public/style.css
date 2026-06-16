@@ -148,3 +148,24 @@ html,body{height:100%;margin:0;background:var(--bg);color:#e8e8f0;font-family:sy
   visibility: visible !important;
   opacity: 1 !important;
 }
+
+
+.obs-only .asset {
+  overflow: hidden !important;
+  transform: translateZ(0);
+  backface-visibility: hidden;
+  will-change: transform, left, top, width, height;
+}
+
+.obs-only .asset-inner,
+.obs-only .asset img,
+.obs-only .asset video,
+.obs-only .asset iframe {
+  transform: translateZ(0);
+  backface-visibility: hidden;
+  will-change: transform;
+}
+
+.obs-only .asset[style*="visibility: hidden"] {
+  display: none !important;
+}

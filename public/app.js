@@ -56,15 +56,8 @@ const state = {
   function applyAssetStyle(el, obj) {
     if (!el || !obj) return;
 
-    const isMediaLike = ['image', 'video', 'browser', 'mediashare'].includes(String(obj.type || '').toLowerCase());
-    let left = Number(obj.left || 0);
-    let top = Number(obj.top || 0);
-
-    // In OBS overlay, media objects spawned in the non-stream/stage zone should still be visible.
-    // Project them into the visible area without mutating the saved coordinates.
-    if (state.role === 'obs' && isMediaLike && top >= state.resolution.h) {
-      top = top - state.resolution.h;
-    }
+    const left = Number(obj.left || 0);
+    const top = Number(obj.top || 0);
 
     el.style.left = `${Math.round(left)}px`;
     el.style.top = `${Math.round(top)}px`;
@@ -72,7 +65,14 @@ const state = {
     el.style.height = `${Math.round(Math.max(16, obj.height || 180))}px`;
     el.style.opacity = String(Math.max(0, Math.min(1, obj.opacity ?? 1)));
     el.style.zIndex = String(Number.isFinite(+obj.zIndex) ? +obj.zIndex : 10 + Math.round(left));
-    el.style.transform = `rotate(${Number(obj.angle || 0)}deg)`;
+    el.style.transform = `translate3d(0,0,0) rotate(${Number(obj.angle || 0)}deg)`;
+    el.style.willChange = 'transform,left,top,width,height';
+    el.style.backfaceVisibility = 'hidden';
+    el.style.transformOrigin = 'center center';
+  }
+
+  function isMediaLikeObject(obj) {
+    return ['image', 'video', 'browser', 'mediashare'].includes(String(obj?.type || '').toLowerCase());
   }
 
   function contentKey(obj) {
@@ -96,6 +96,7 @@ const state = {
       el.classList.remove('selected');
       el.querySelectorAll('.handle').forEach(h => h.remove());
       el.style.pointerEvents = 'none';
+      el.style.visibility = (obj.top >= state.resolution.h) ? 'hidden' : 'visible';
     }
   }
 
@@ -455,6 +456,8 @@ const state = {
         img.style.height = '100%';
         img.style.objectFit = 'contain';
         img.style.display = 'block';
+        img.style.transform = 'translateZ(0)';
+        img.style.backfaceVisibility = 'hidden';
         inner.appendChild(img);
         break;
       }
@@ -485,6 +488,8 @@ const state = {
           video.style.objectFit = 'contain';
           video.style.display = 'block';
           video.style.background='#000';
+          video.style.transform = 'translateZ(0)';
+          video.style.backfaceVisibility = 'hidden';
           video.addEventListener('loadedmetadata', () => video.play().catch(() => {}), { once: true });
           video.addEventListener('canplay', () => video.play().catch(() => {}), { once: true });
           video.addEventListener('loadeddata', () => video.play().catch(() => {}), { once: true });
@@ -748,11 +753,18 @@ const state = {
 
   function renderObject(obj) {
     if (!obj || !obj.visible) return;
-    const isMediaLike = ['image', 'video', 'browser', 'mediashare'].includes(String(obj.type || '').toLowerCase());
-    if (state.role === 'obs' && obj.top >= state.resolution.h && !isMediaLike) return;
+    const mediaLike = isMediaLikeObject(obj);
+    if (state.role === 'obs' && obj.top >= state.resolution.h) return;
     const el = assetEl(obj.id);
     if (el) syncAssetView(el, obj, obj);
     else buildAssetElement(obj);
+    if (state.role === 'obs' && mediaLike && obj.top < state.resolution.h) {
+      const el2 = assetEl(obj.id);
+      if (el2) {
+        el2.style.visibility = 'visible';
+        el2.style.opacity = String(Math.max(0, Math.min(1, obj.opacity ?? 1)));
+      }
+    }
   }
 
   function renderAll() {
@@ -760,8 +772,7 @@ const state = {
     world.querySelectorAll('.asset').forEach(el => {
       const id = el.dataset.id;
       const obj = state.objects[id];
-      const isMediaLike = obj && ['image', 'video', 'browser', 'mediashare'].includes(String(obj.type || '').toLowerCase());
-      if (!obj || !obj.visible || (state.role === 'obs' && obj.top >= state.resolution.h && !isMediaLike)) el.remove();
+      if (!obj || !obj.visible || (state.role === 'obs' && obj.top >= state.resolution.h)) el.remove();
     });
     Object.values(state.objects).forEach(obj => renderObject(obj));
     renderSelection(); renderLists(); applyView(); updateDynamicTimers();
@@ -923,9 +934,10 @@ const state = {
       obj.top = Math.round(state.drag.startObj.top + (pt.y - state.drag.start.y));
       setObject(obj.id, { left: obj.left, top: obj.top }, false);
       const now = performance.now();
-      if (now - lastRealtimeEmit > 50) {
+      const emitEvery = isMediaLikeObject(obj) ? 16 : 32;
+      if (now - lastRealtimeEmit > emitEvery) {
         lastRealtimeEmit = now;
-        socket.emit('update_element', obj);
+        socket.emit('update_element', { ...obj });
       }
     } else if (state.resize) {
       const obj = state.objects[state.resize.id]; if (!obj) return;
@@ -945,6 +957,12 @@ const state = {
       if (h === 'mr') { obj.width = Math.max(24, Math.round(state.resize.startObj.width + dx)); }
       
       setObject(obj.id, { left: obj.left, top: obj.top, width: obj.width, height: obj.height }, true);
+      const now = performance.now();
+      const emitEvery = isMediaLikeObject(obj) ? 16 : 32;
+      if (now - lastRealtimeEmit > emitEvery) {
+        lastRealtimeEmit = now;
+        socket.emit('update_element', { ...obj });
+      }
     } else if (state.rotate) {
       const obj = state.objects[state.rotate.id]; if (!obj) return;
       const angle = Math.atan2(pt.y - state.rotate.center.y, pt.x - state.rotate.center.x);
