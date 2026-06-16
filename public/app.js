@@ -9,7 +9,13 @@
   const role = document.body.classList.contains('obs-only') ? 'obs' : 'admin';
   
   // Подключаемся по веб-сокетам на хостинге Bothost
-  const socket = io(location.origin, { transports: ['websocket'] });
+  const socket = io(location.origin, {
+    transports: ['polling', 'websocket'],
+    upgrade: true,
+    reconnection: true,
+    reconnectionAttempts: Infinity,
+    timeout: 20000
+  });
 
   let lastRealtimeEmit = 0;
 let lastInspectorSyncAt = 0;
@@ -451,6 +457,7 @@ const state = {
         img.decoding = 'async';
         img.draggable = false;
         img.crossOrigin = 'anonymous';
+        img.referrerPolicy = 'no-referrer';
         img.style.width = '100%';
         img.style.height = '100%';
         img.style.objectFit = 'contain';
@@ -1249,6 +1256,8 @@ const state = {
   }
 
   socket.on('connect', () => { state.connected = true; });
+  socket.on('disconnect', () => { state.connected = false; });
+  socket.on('connect_error', (err) => { console.warn('socket connect_error', err?.message || err); });
   socket.on('room_state', syncRoomState);
   socket.on('meta_updated', (meta) => { state.meta = meta; state.resolution = meta.resolution; renderLists(); renderInspector(); });
   socket.on('element_added', (obj) => {
