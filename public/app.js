@@ -29,7 +29,7 @@ const state = {
     zoom: 1, panX: 0, panY: 0, fitZoom: 1,
     isPanning: false, panStart: null, drag: null, rotate: null, resize: null,
     selecting: false, selectionRect: null, spaceDown: false, lockView: false,
-    spawnBusy: false, netCounter: 0, _netTimer: null, localEdits: new Set()
+    spawnBusy: false, netCounter: 0, _netTimer: null, roomPollTimer: null, roomPollHash: ''
   };
 
   const INSPECTOR_FIELDS = ['inspX','inspY','inspW','inspH','inspAngle','inspOpacity','inspText','inspUrl','timerDurationInput'];
@@ -79,6 +79,14 @@ const state = {
 
   function isMediaLikeObject(obj) {
     return ['image', 'video', 'browser', 'mediashare'].includes(String(obj?.type || '').toLowerCase());
+  }
+
+  function stableRoomHash(roomState) {
+    try {
+      return JSON.stringify(roomState || {});
+    } catch {
+      return String(Date.now());
+    }
   }
 
   function contentKey(obj) {
@@ -931,12 +939,13 @@ const state = {
       const obj = state.objects[state.drag.id]; if (!obj) return;
       obj.left = Math.round(state.drag.startObj.left + (pt.x - state.drag.start.x));
       obj.top = Math.round(state.drag.startObj.top + (pt.y - state.drag.start.y));
-      setObject(obj.id, { left: obj.left, top: obj.top }, false);
       const now = performance.now();
       const emitEvery = isMediaLikeObject(obj) ? 24 : 40;
       if (now - lastRealtimeEmit > emitEvery) {
         lastRealtimeEmit = now;
-        socket.emit('update_element', { ...obj });
+        setObject(obj.id, { left: obj.left, top: obj.top }, true);
+      } else {
+        setObject(obj.id, { left: obj.left, top: obj.top }, false);
       }
     } else if (state.resize) {
       const obj = state.objects[state.resize.id]; if (!obj) return;
@@ -955,12 +964,13 @@ const state = {
       if (h === 'ml') { obj.width = Math.max(24, Math.round(state.resize.startObj.width - dx)); obj.left = Math.round(state.resize.startObj.left + dx); }
       if (h === 'mr') { obj.width = Math.max(24, Math.round(state.resize.startObj.width + dx)); }
       
-      setObject(obj.id, { left: obj.left, top: obj.top, width: obj.width, height: obj.height }, true);
       const now = performance.now();
       const emitEvery = isMediaLikeObject(obj) ? 24 : 40;
       if (now - lastRealtimeEmit > emitEvery) {
         lastRealtimeEmit = now;
-        socket.emit('update_element', { ...obj });
+        setObject(obj.id, { left: obj.left, top: obj.top, width: obj.width, height: obj.height }, true);
+      } else {
+        setObject(obj.id, { left: obj.left, top: obj.top, width: obj.width, height: obj.height }, false);
       }
     } else if (state.rotate) {
       const obj = state.objects[state.rotate.id]; if (!obj) return;
@@ -988,9 +998,9 @@ const state = {
     if (state.role !== 'admin') return;
     selectionBox.style.display = 'none'; state.selecting = false; state.isPanning = false; state.selectionRect = null;
     if (viewport) viewport.style.cursor = 'default';
-    if (state.drag) { const obj = state.objects[state.drag.id]; if (obj) socket.emit('update_element', { ...obj }); state.localEdits.delete(state.drag.id); state.drag = null; }
-    if (state.resize) { const obj = state.objects[state.resize.id]; if (obj) socket.emit('update_element', { ...obj }); state.localEdits.delete(state.resize.id); state.resize = null; }
-    if (state.rotate) { const obj = state.objects[state.rotate.id]; if (obj) socket.emit('update_element', { ...obj }); state.localEdits.delete(state.rotate.id); state.rotate = null; }
+    if (state.drag) { const obj = state.objects[state.drag.id]; if (obj) socket.emit('update_element', { ...obj }); state.drag = null; }
+    if (state.resize) { const obj = state.objects[state.resize.id]; if (obj) socket.emit('update_element', { ...obj }); state.resize = null; }
+    if (state.rotate) { const obj = state.objects[state.rotate.id]; if (obj) socket.emit('update_element', { ...obj }); state.rotate = null; }
   }
 
   function onWheel(e) {
@@ -1037,6 +1047,27 @@ const state = {
     renderAll();
   }
 
+  async function fetchObsRoomState() {
+    try {
+      const res = await fetch(`/api/room-state?room=${encodeURIComponent(room)}`, { cache: 'no-store' });
+      if (!res.ok) return;
+      const roomState = await res.json();
+      const hash = stableRoomHash(roomState);
+      if (hash !== state.roomPollHash) {
+        state.roomPollHash = hash;
+        syncRoomState(roomState);
+      }
+    } catch (err) {
+      // silent fallback
+    }
+  }
+
+  function startObsRoomPolling() {
+    if (state.roomPollTimer) clearInterval(state.roomPollTimer);
+    fetchObsRoomState();
+    state.roomPollTimer = setInterval(fetchObsRoomState, 250);
+  }
+
   async function loadModerators() {
     if (currentRole !== 'streamer') return;
     try {
@@ -1078,6 +1109,7 @@ const state = {
       socket.emit('auth', { username: currentUsername });
       socket.emit('join_room', { room, role: 'obs', username: currentUsername });
       setRoomTexts(); fitToScreen(true); renderAll();
+      startObsRoomPolling();
       return;
     }
     try {
@@ -1270,7 +1302,6 @@ const state = {
     flashElement(next.id);
   });
   socket.on('element_updated', (obj) => {
-    if (state.role === 'admin' && state.localEdits.has(obj.id)) return;
     const prev = state.objects[obj.id] ? { ...state.objects[obj.id] } : null;
     if (prev && Number(prev.rev || 0) > Number(obj.rev || 0)) return;
     state.objects[obj.id] = normalizeObject({ ...(state.objects[obj.id] || {}), ...obj });

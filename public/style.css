@@ -136,18 +136,6 @@ html,body{height:100%;margin:0;background:var(--bg);color:#e8e8f0;font-family:sy
 }
 /* --- END OF FILE public/style.css --- */
 
-.obs-only .asset {
-  overflow: visible !important;
-}
-.obs-only .asset-inner {
-  overflow: visible !important;
-}
-.obs-only .asset video,
-.obs-only .asset iframe,
-.obs-only .asset img {
-  visibility: visible !important;
-  opacity: 1 !important;
-}
 
 
 .obs-only .asset {

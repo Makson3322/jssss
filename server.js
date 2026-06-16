@@ -141,6 +141,12 @@ app.get('/obs.html', (req, res) => {
   res.sendFile(path.join(__dirname, 'public', 'obs.html'));
 });
 
+app.get('/api/room-state', (req, res) => {
+  const room = String(req.query.room || 'default').trim() || 'default';
+  const state = ensureRoom(room);
+  res.json(clone(state));
+});
+
 // ---------- API модераторов ----------
 app.get('/api/moderators', requireModerator, (req, res) => {
   const moderators = Object.values(users)
@@ -308,8 +314,8 @@ io.on('connection', (socket) => {
     const current = state.objects[id];
     const incomingRev = Number(payload.rev) || 0;
     const currentRev = Number(current.rev) || 0;
-    const nextRev = Math.max(currentRev, incomingRev);
-    const merged = normalizeObject({ ...current, ...payload, id, rev: nextRev });
+    if (incomingRev <= currentRev) return;
+    const merged = normalizeObject({ ...current, ...payload, id, rev: incomingRev });
     state.objects[id] = merged;
     io.to(currentRoom).emit('element_updated', clone(merged));
     if (typeof ack === 'function') ack({ ok: true, object: clone(merged) });
