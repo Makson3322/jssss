@@ -13,12 +13,13 @@
     hash: '',
     zoom: 1,
     panX: 0,
-    panY: 0
+    panY: 0,
+    socketReady: false,
+    pollTimer: null,
+    fallbackTimer: null,
+    renderQueued: false,
+    pendingFullSync: false
   };
-
-  function esc(v) {
-    return String(v ?? '').replace(/[&<>"]/g, (m) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[m]));
-  }
 
   function normalizeUrl(input) {
     let url = String(input || '').trim();
@@ -70,10 +71,24 @@
     return obj;
   }
 
+  function isMediaLike(obj) {
+    return ['image', 'video', 'browser', 'mediashare'].includes(String(obj?.type || '').toLowerCase());
+  }
+
+  function contentKey(obj) {
+    if (!obj) return '';
+    return [
+      obj.type, obj.src, obj.text, obj.qrText, obj.bg, obj.color,
+      obj.fontSize, obj.fontWeight, obj.radius, obj.borderColor, obj.borderWidth,
+      JSON.stringify(obj.items || []), JSON.stringify(obj.data || {})
+    ].join('|');
+  }
+
   function renderAssetContent(obj, inner) {
     if (!inner) return;
     inner.innerHTML = '';
     const type = String(obj.type || '').toLowerCase();
+
     if (type === 'image') {
       const img = document.createElement('img');
       img.src = obj.src || '';
@@ -87,6 +102,7 @@
       inner.appendChild(img);
       return;
     }
+
     if (type === 'video') {
       const yt = youtubeEmbedUrl(obj.src);
       if (yt) {
@@ -118,9 +134,10 @@
         inner.appendChild(fallback);
       }, { once: true });
       inner.appendChild(video);
-      setTimeout(() => video.play().catch(() => {}), 50);
+      setTimeout(() => video.play().catch(() => {}), 30);
       return;
     }
+
     if (type === 'browser' || type === 'mediashare') {
       const frame = document.createElement('iframe');
       frame.src = normalizeUrl(obj.src);
@@ -136,8 +153,11 @@
     inner.appendChild(wrap);
   }
 
-  function makeAsset(obj) {
+  function ensureAsset(obj) {
+    if (!obj || !obj.id) return null;
     let el = world.querySelector(`.asset[data-id="${CSS.escape(obj.id)}"]`);
+    const prev = el ? el._obj : null;
+
     if (!el) {
       el = document.createElement('div');
       el.className = 'asset';
@@ -145,48 +165,150 @@
       el.innerHTML = '<div class="asset-inner"></div>';
       world.appendChild(el);
     }
-    const inner = el.querySelector('.asset-inner');
+
+    const changed = !prev || contentKey(prev) !== contentKey(obj);
+    el._obj = { ...obj };
+
     el.style.left = `${Math.round(obj.left)}px`;
     el.style.top = `${Math.round(obj.top)}px`;
     el.style.width = `${Math.round(obj.width)}px`;
     el.style.height = `${Math.round(obj.height)}px`;
     el.style.opacity = String(obj.opacity);
-    el.style.transform = `rotate(${obj.angle || 0}deg)`;
-    el.style.visibility = (obj.top < state.resolution.h && obj.visible) ? 'visible' : 'hidden';
+    el.style.transform = `translate3d(0,0,0) rotate(${obj.angle || 0}deg)`;
+    el.style.visibility = (obj.visible && obj.top < state.resolution.h) ? 'visible' : 'hidden';
     el.style.pointerEvents = 'none';
-    renderAssetContent(obj, inner);
+    el.style.willChange = 'transform,left,top,width,height';
+
+    if (changed) {
+      renderAssetContent(obj, el.querySelector('.asset-inner'));
+    }
+
+    return el;
   }
 
-  function render(roomState) {
+  function removeAsset(id) {
+    const el = world.querySelector(`.asset[data-id="${CSS.escape(String(id))}"]`);
+    if (el) el.remove();
+    delete state.objects[String(id)];
+  }
+
+  function applyFullState(roomState) {
     if (!roomState) return;
     state.meta = roomState.meta || state.meta;
     state.resolution = state.meta.resolution || state.resolution;
-    const next = {};
+
+    const nextObjects = {};
     Object.values(roomState.objects || {}).forEach((o) => {
       const obj = normalizeObject(o);
-      next[obj.id] = obj;
+      nextObjects[obj.id] = obj;
     });
-    state.objects = next;
+    state.objects = nextObjects;
 
-    // Clear removed elements
-    $$(`.asset`, world).forEach(el => {
+    $$('.asset', world).forEach(el => {
       if (!state.objects[el.dataset.id]) el.remove();
     });
 
-    Object.values(state.objects).forEach(obj => {
+    Object.values(state.objects).forEach((obj) => {
       if (!obj.visible) return;
-      makeAsset(obj);
+      ensureAsset(obj);
     });
   }
 
-  async function fetchState() {
-    const res = await fetch(`/api/room-state?room=${encodeURIComponent(room)}`, { cache: 'no-store' });
-    if (!res.ok) return;
-    const roomState = await res.json();
+  function scheduleRender() {
+    if (state.renderQueued) return;
+    state.renderQueued = true;
+    requestAnimationFrame(() => {
+      state.renderQueued = false;
+      Object.values(state.objects).forEach(obj => {
+        if (!obj.visible) return;
+        ensureAsset(obj);
+      });
+    });
+  }
+
+  function onRoomState(roomState) {
     const h = stableHash(roomState);
     if (h === state.hash) return;
     state.hash = h;
-    render(roomState);
+    applyFullState(roomState);
+  }
+
+  function upsertObject(obj) {
+    const next = normalizeObject(obj);
+    const cur = state.objects[next.id];
+    state.objects[next.id] = next;
+
+    if (cur) {
+      const el = ensureAsset(next);
+      if (el) {
+        el._obj = { ...next };
+      }
+    } else {
+      ensureAsset(next);
+    }
+  }
+
+  function refreshObject(obj) {
+    if (!obj || !obj.id) return;
+    const next = normalizeObject(obj);
+    const cur = state.objects[next.id];
+    if (!cur || Number(next.rev || 0) >= Number(cur.rev || 0)) {
+      state.objects[next.id] = next;
+      ensureAsset(next);
+    }
+  }
+
+  function syncRemove(id) {
+    removeAsset(id);
+  }
+
+  async function fetchState() {
+    try {
+      const res = await fetch(`/api/room-state?room=${encodeURIComponent(room)}`, { cache: 'no-store' });
+      if (!res.ok) return;
+      const roomState = await res.json();
+      const h = stableHash(roomState);
+      if (h === state.hash) return;
+      state.hash = h;
+      applyFullState(roomState);
+    } catch {}
+  }
+
+  function connectSocket() {
+    if (typeof io !== 'function') return null;
+    const socket = io(location.origin, {
+      transports: ['websocket', 'polling'],
+      upgrade: true,
+      reconnection: true,
+      reconnectionAttempts: Infinity,
+      timeout: 20000
+    });
+
+    socket.on('connect', () => {
+      state.socketReady = true;
+      socket.emit('join_room', { room, role: 'obs', username: 'obs_viewer' });
+      fetchState().catch(() => {});
+    });
+
+    socket.on('disconnect', () => {
+      state.socketReady = false;
+    });
+
+    socket.on('room_state', onRoomState);
+    socket.on('meta_updated', (meta) => {
+      state.meta = meta || state.meta;
+      state.resolution = state.meta.resolution || state.resolution;
+      scheduleRender();
+    });
+    socket.on('element_added', (obj) => upsertObject(obj));
+    socket.on('element_updated', (obj) => refreshObject(obj));
+    socket.on('element_removed', ({ id }) => syncRemove(id));
+    socket.on('canvas_cleared', () => {
+      state.objects = {};
+      $$('.asset', world).forEach(el => el.remove());
+    });
+
+    return socket;
   }
 
   function fit() {
@@ -203,6 +325,15 @@
   window.addEventListener('resize', fit);
 
   fit();
+  const socket = connectSocket();
+
   fetchState().catch(() => {});
-  setInterval(() => fetchState().catch(() => {}), 80);
+  setInterval(() => {
+    if (!state.socketReady) fetchState().catch(() => {});
+  }, 500);
+
+  // Safety net: if socket emits updates but a browser source misses a frame, keep DOM in sync.
+  setInterval(() => {
+    if (state.socketReady) scheduleRender();
+  }, 1000 / 30);
 })();
