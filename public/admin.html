@@ -5,6 +5,7 @@
   <meta name="viewport" content="width=device-width,initial-scale=1">
   <title>Dashboard | Poltergeist</title>
   <link rel="stylesheet" href="/style.css">
+  <script src="https://cdn.jsdelivr.net/npm/qrcode-styling@1.9.2/lib/qrcode-styling.min.js"></script>
 </head>
 <body>
   <div class="app">
@@ -26,23 +27,225 @@
       </div>
 
       <div class="section">
+        <div class="section-title"><span>Trial / Status</span><span class="small">LIVE</span></div>
+        <button class="btn gold" id="trialBtn">⏳ 7-day trial active</button>
+      </div>
+
+      <div class="section">
+        <div class="section-title"><span>Canvas resolution</span><span class="small">Affects OBS</span></div>
+        <select id="resolutionSelect" class="field">
+          <option value="1280x720">720p HD (1280x720)</option>
+          <option value="1920x1080" selected>1080p FHD (1920x1080)</option>
+          <option value="2560x1440">1440p QHD (2560x1440)</option>
+          <option value="3840x2160">4K UHD (3840x2160)</option>
+          <option value="1080x1920">Vertical (1080x1920)</option>
+        </select>
+        <div class="small" style="margin-top:6px;color:var(--muted)">Live area is OBS. Staging is admin-only.</div>
+      </div>
+
+      <div class="section">
+        <div class="section-title"><span>OBS studio setup</span><span class="small">GET LINK</span></div>
+        <button class="btn row" id="copyObsLinkBtn"><span>📺 OBS Browser Source</span><span>LINK</span></button>
+        <div class="small" id="obsLinkText" style="margin-top:6px;word-break:break-all;color:#8b8ba3"></div>
+      </div>
+
+      <div class="section">
+        <div class="section-title"><span>Image inputs</span><span class="small">file / url</span></div>
+        <div class="grid2">
+          <button class="btn sm purple" id="addImageFileBtn">Upload photo</button>
+          <button class="btn sm purple" id="addImageUrlBtn">Image by link</button>
+        </div>
+        <input id="imageFileInput" type="file" accept="image/*" hidden>
+        <div style="margin-top:8px;">
+          <button class="btn sm purple" id="addSoundFileBtn">🎵 Upload MP3</button>
+          <input id="soundFileInput" type="file" accept="audio/*" hidden>
+        </div>
+      </div>
+
+      <div class="section" id="moderatorsSection" style="display: none;">
+        <div class="section-title"><span>👥 Модераторы</span><span class="small">онлайн/оффлайн</span></div>
+        <div style="display: flex; gap: 8px; margin-bottom: 12px;">
+          <input type="text" id="newModeratorName" placeholder="Никнейм" class="field">
+          <button id="addModeratorBtn" class="btn green">➕ Добавить</button>
+        </div>
+        <div id="moderatorsTable" class="list" style="max-height: 300px;"></div>
+      </div>
+
+      <div class="section">
+        <div class="section-title"><span>Action log</span><span class="small">latest 50</span></div>
+        <div id="actionLog" class="log"></div>
+      </div>
+
+      <div class="section">
+        <div class="section-title"><span>Canvas layer</span><span class="small">Focus</span></div>
+        <select id="layerSelect" class="field">
+          <option value="1">Layer 1 (Main)</option>
+          <option value="2">Layer 2 (Background)</option>
+          <option value="3">Layer 3 (Foreground)</option>
+          <option value="4">Layer 4 (Overlay)</option>
+        </select>
+        <div class="small" style="margin-top:6px;color:var(--muted)">All layers merge on OBS overlay.</div>
+      </div>
+
+      <div class="section">
         <div class="section-title"><span>Tools</span><span class="small">Editor</span></div>
-        <button class="btn sm" id="fitBtn">🗺 Fit view</button>
+        <div class="grid2">
+          <button class="btn sm" id="toggleSnapBtn">🧲 Snap mode</button>
+          <button class="btn sm" id="fitBtn">🗺 Fit view</button>
+        </div>
+        <div class="grid2">
+          <button class="btn sm red" id="deleteBtn">🗑 Delete selection</button>
+          <button class="btn sm red" id="clearCanvasBtn">🗑 Clear all</button>
+        </div>
+      </div>
+
+      <div class="section">
+        <div class="section-title"><span>Broadcast control</span><span class="small">stage/live</span></div>
+        <div class="grid2">
+          <button class="btn gold" id="pushLiveBtn">⬆ Push to live</button>
+          <button class="btn gold" id="swapBtn">🔁 Swap live ⇄ stage</button>
+        </div>
+      </div>
+
+      <div class="section">
+        <div class="section-title"><span>Presets (staging)</span><span class="small">save/load</span></div>
+        <div class="grid2">
+          <input id="presetNameInput" class="field" placeholder="Preset name">
+          <button class="btn green" id="savePresetBtn">Save</button>
+        </div>
+        <div id="presetList" class="list" style="margin-top:8px"></div>
+      </div>
+
+      <div class="section">
+        <div class="section-title"><span>Scenes</span><span class="small">replace all</span></div>
+        <div class="grid2">
+          <input id="sceneNameInput" class="field" placeholder="Scene name">
+          <button class="btn purple" id="saveSceneBtn">Save</button>
+        </div>
+        <div id="sceneList" class="list" style="margin-top:8px"></div>
+      </div>
+
+      <div class="section">
+        <div class="section-title"><span>Soundboard</span><span class="small">audio</span></div>
+        <div class="grid1">
+          <input id="soundNameInput" class="field" placeholder="Sound name">
+          <input id="soundUrlInput" class="field" placeholder="Sound URL">
+          <button class="btn sm" id="addSoundBtn">+ Add sound (URL)</button>
+          <button class="btn sm red" id="stopAllSoundBtn">Stop all audio</button>
+        </div>
+        <div id="soundList" class="list" style="margin-top:8px"></div>
       </div>
     </aside>
 
     <main class="center">
+      <div class="topbar">
+        <span class="pill gold" id="trialBanner">⏳ PRO TRIAL ACTIVE</span>
+      </div>
+
       <div class="viewport" id="viewport">
         <div class="world" id="world">
           <div class="zone live"><div class="tag">Livestream area // 1920x1080</div></div>
-          <div class="zone stage"><div class="tag">Staging area</div></div>
+          <div class="zone stage"><div class="tag">Staging area - presets load here</div></div>
           <div class="selection-box" id="selectionBox"></div>
         </div>
       </div>
-      <div class="help">Wheel zoom · middle drag pan</div>
+
+      <div class="help">Wheel zoom · middle drag pan · shift-click multi select · double click to edit</div>
+
       <div class="statusbar" id="netStatus">NET: 0/s</div>
+      <div class="floating">
+        <div class="mini" id="lockBtn" title="Lock view">🔒</div>
+        <div class="mini" id="helpBtn" title="Help">?</div>
+        <span class="pill green" id="layerPill">Layer 1</span>
+        <span class="pill green" id="zoomPill">Zoom: 100%</span>
+      </div>
     </main>
+
+    <aside class="rightbar" id="inspectorBar">
+      <div class="section">
+        <div class="section-title"><span>Inspector</span><span class="small" id="selectedCount">0 selected</span></div>
+        <div id="inspectorEmpty" class="inspector-empty">Select an object to edit its properties.</div>
+        <div id="inspectorBody" class="hidden">
+          <table class="inspector-table">
+            <tr><th>Type</th><td colspan="2" id="inspType">-</td></tr>
+            <tr><th>X</th><td><input id="inspX" type="number" step="1"></td><td></td></tr>
+            <tr><th>Y</th><td><input id="inspY" type="number" step="1"></td><td></td></tr>
+            <tr><th>Width</th><td><input id="inspW" type="number" step="1"></td><td></td></tr>
+            <tr><th>Height</th><td><input id="inspH" type="number" step="1"></td><td></td></tr>
+            <tr><th>Angle</th><td><input id="inspAngle" type="number" step="1"></td><td></td></tr>
+            <tr><th>Opacity</th><td><input id="inspOpacity" type="number" min="0" max="1" step="0.05"></td><td></td></tr>
+            <tr><th>Text</th><td colspan="2"><input id="inspText" type="text" placeholder="text / title / QR value"></td></tr>
+            <tr><th>URL</th><td colspan="2"><input id="inspUrl" type="text" placeholder="https://..."></td></tr>
+            <tr><th>Color</th><td colspan="2"><input id="inspColor" type="color" value="#ffffff"></td></tr>
+            <tr><th>Font Size</th><td><input id="inspFontSize" type="number" step="1" min="8" max="200" value="42"></td><td>px</td></tr>
+            <tr><th>Font Weight</th><td><input id="inspFontWeight" type="number" step="100" min="100" max="900" value="800"></td><td></td></tr>
+          </table>
+          <div class="inspector-actions">
+            <button class="btn sm green" id="applyPropsBtn">Apply changes</button>
+            <button class="btn sm purple" id="dupBtn">Duplicate</button>
+            <button class="btn sm gold" id="toLiveBtn">Move to live</button>
+            <button class="btn sm gold" id="toStageBtn">Move to staging</button>
+          </div>
+          <div class="timer-panel hidden" id="timerPanel">
+            <h4>⏱ Timer controls</h4>
+            <div class="timer-grid">
+              <div class="full">
+                <div class="row-mini">
+                  <label style="color:var(--muted);font-size:11px;">Duration (sec)</label>
+                  <button class="btn sm" id="timerSetDurationBtn">Set</button>
+                </div>
+                <input id="timerDurationInput" type="number" min="0" step="1" value="300">
+              </div>
+              <div class="full">
+                <div style="display:flex;justify-content:space-between;gap:8px;margin-top:6px">
+                  <div><span style="color:var(--muted);font-size:11px;">Status</span><div id="timerStatusText" style="font-weight:800">stopped</div></div>
+                  <div style="text-align:right"><span style="color:var(--muted);font-size:11px;">Remaining</span><div id="timerRemainingText" style="font-weight:800">00:00:00</div></div>
+                </div>
+              </div>
+            </div>
+            <div class="timer-btns">
+              <button class="btn green" id="timerStartBtn">Start</button>
+              <button class="btn" id="timerPauseBtn">Pause</button>
+              <button class="btn red" id="timerStopBtn">Stop</button>
+              <button class="btn gold" id="timerResetBtn">Reset</button>
+            </div>
+            <div class="timer-btns" style="grid-template-columns:repeat(2,1fr);margin-top:8px">
+              <button class="btn" id="timerPlus10Btn">+10s</button>
+              <button class="btn" id="timerMinus10Btn">-10s</button>
+            </div>
+          </div>
+          <div class="audio-panel hidden" id="audioPanel" style="margin-top:12px;border:1px solid rgba(57,255,20,.25);border-radius:14px;padding:10px;background:rgba(57,255,20,.05);">
+            <h4 style="margin:0 0 8px;color:#39ff14;text-transform:uppercase;font-size:12px;letter-spacing:.1em;">🎵 Audio Controls</h4>
+            <div style="display:flex;gap:8px;align-items:center;">
+              <button class="btn sm green" id="audioPlayBtn">▶ Play</button>
+              <label style="font-size:11px;color:var(--muted);display:flex;align-items:center;gap:6px;">
+                <input type="checkbox" id="audioMute"> Mute
+              </label>
+              <input type="range" id="audioVolume" min="0" max="1" step="0.05" value="1" style="flex:1;">
+              <span id="audioVolumeLabel" style="color:var(--muted);font-size:11px;min-width:30px;">100%</span>
+            </div>
+          </div>
+          <div class="inspector-actions" style="margin-top:12px">
+            <button class="btn sm red" id="deleteSelectedBtn">Delete selected</button>
+            <button class="btn sm red" id="clearAllBtn">Clear canvas</button>
+          </div>
+        </div>
+      </div>
+    </aside>
   </div>
+
+  <div id="moderatorModal" class="modal hidden">
+    <div class="modal-content">
+      <span class="close">&times;</span>
+      <h3>Информация о модераторе</h3>
+      <p><strong>Ник:</strong> <span id="modalUsername"></span></p>
+      <p><strong>Пароль:</strong> <span id="modalPassword">••••••••</span> <button id="togglePasswordBtn" class="btn sm">👁️ Показать</button></p>
+      <p><strong>Статус:</strong> <span id="modalStatus"></span></p>
+      <button id="closeModalBtn" class="btn red">Закрыть</button>
+    </div>
+  </div>
+
+  <input id="hiddenImageUrlPrompt" type="text" class="hidden">
   <script src="/socket.io/socket.io.js"></script>
   <script src="/app.js"></script>
 </body>
