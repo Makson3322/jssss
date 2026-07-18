@@ -1,4 +1,3 @@
-<!-- START OF FILE public/admin.html -->
 <!DOCTYPE html>
 <html lang="ru">
 <head>
@@ -52,15 +51,15 @@
 
       <div class="section">
         <div class="section-title"><span>Image inputs</span><span class="small">file / url</span></div>
-        <div style="margin-top:8px;">
-          <button class="btn sm purple" id="addSoundFileBtn">🎵 Upload MP3</button>
-          <input id="soundFileInput" type="file" accept="audio/*" hidden>
-        </div>
         <div class="grid2">
           <button class="btn sm purple" id="addImageFileBtn">Upload photo</button>
           <button class="btn sm purple" id="addImageUrlBtn">Image by link</button>
         </div>
         <input id="imageFileInput" type="file" accept="image/*" hidden>
+        <div style="margin-top:8px;">
+          <button class="btn sm purple" id="addSoundFileBtn">🎵 Upload MP3</button>
+          <input id="soundFileInput" type="file" accept="audio/*" hidden>
+        </div>
       </div>
 
       <div class="section" id="moderatorsSection" style="display: none;">
@@ -187,18 +186,45 @@
             <button class="btn sm gold" id="toLiveBtn">Move to live</button>
             <button class="btn sm gold" id="toStageBtn">Move to staging</button>
           </div>
-          <div class="timer-panel hidden" id="timerPanel"></div>
-          <div class="audio-panel hidden" id="audioPanel" style="margin-top:12px;border:1px solid rgba(57,255,20,.25);border-radius:14px;padding:10px;background:rgba(57,255,20,.05);">
-              <h4 style="margin:0 0 8px;color:#39ff14;text-transform:uppercase;font-size:12px;letter-spacing:.1em;">🎵 Audio Controls</h4>
-              <div style="display:flex;gap:8px;align-items:center;">
-                <button class="btn sm green" id="audioPlayBtn">▶ Play</button>
-                <label style="font-size:11px;color:var(--muted);display:flex;align-items:center;gap:6px;">
-                  <input type="checkbox" id="audioMute"> Mute
-                </label>
-                <input type="range" id="audioVolume" min="0" max="1" step="0.05" value="1" style="flex:1;">
-                <span id="audioVolumeLabel" style="color:var(--muted);font-size:11px;min-width:30px;">100%</span>
+          <div class="timer-panel hidden" id="timerPanel">
+            <h4>⏱ Timer controls</h4>
+            <div class="timer-grid">
+              <div class="full">
+                <div class="row-mini">
+                  <label style="color:var(--muted);font-size:11px;">Duration (sec)</label>
+                  <button class="btn sm" id="timerSetDurationBtn">Set</button>
+                </div>
+                <input id="timerDurationInput" type="number" min="0" step="1" value="300">
+              </div>
+              <div class="full">
+                <div style="display:flex;justify-content:space-between;gap:8px;margin-top:6px">
+                  <div><span style="color:var(--muted);font-size:11px;">Status</span><div id="timerStatusText" style="font-weight:800">stopped</div></div>
+                  <div style="text-align:right"><span style="color:var(--muted);font-size:11px;">Remaining</span><div id="timerRemainingText" style="font-weight:800">00:00:00</div></div>
+                </div>
               </div>
             </div>
+            <div class="timer-btns">
+              <button class="btn green" id="timerStartBtn">Start</button>
+              <button class="btn" id="timerPauseBtn">Pause</button>
+              <button class="btn red" id="timerStopBtn">Stop</button>
+              <button class="btn gold" id="timerResetBtn">Reset</button>
+            </div>
+            <div class="timer-btns" style="grid-template-columns:repeat(2,1fr);margin-top:8px">
+              <button class="btn" id="timerPlus10Btn">+10s</button>
+              <button class="btn" id="timerMinus10Btn">-10s</button>
+            </div>
+          </div>
+          <div class="audio-panel hidden" id="audioPanel" style="margin-top:12px;border:1px solid rgba(57,255,20,.25);border-radius:14px;padding:10px;background:rgba(57,255,20,.05);">
+            <h4 style="margin:0 0 8px;color:#39ff14;text-transform:uppercase;font-size:12px;letter-spacing:.1em;">🎵 Audio Controls</h4>
+            <div style="display:flex;gap:8px;align-items:center;">
+              <button class="btn sm green" id="audioPlayBtn">▶ Play</button>
+              <label style="font-size:11px;color:var(--muted);display:flex;align-items:center;gap:6px;">
+                <input type="checkbox" id="audioMute"> Mute
+              </label>
+              <input type="range" id="audioVolume" min="0" max="1" step="0.05" value="1" style="flex:1;">
+              <span id="audioVolumeLabel" style="color:var(--muted);font-size:11px;min-width:30px;">100%</span>
+            </div>
+          </div>
           <div class="inspector-actions" style="margin-top:12px">
             <button class="btn sm red" id="deleteSelectedBtn">Delete selected</button>
             <button class="btn sm red" id="clearAllBtn">Clear canvas</button>
@@ -224,4 +250,3 @@
   <script src="/app.js"></script>
 </body>
 </html>
-<!-- END OF FILE public/admin.html -->
