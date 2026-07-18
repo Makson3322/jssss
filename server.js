@@ -83,7 +83,6 @@ function requireModerator(req, res, next) {
 }
 
 // ----- Маршруты -----
-// ГЛАВНАЯ СТРАНИЦА - редирект на логин
 app.get('/', (req, res) => {
   res.redirect('/login');
 });
@@ -182,7 +181,15 @@ function ensureRoom(room) {
   const name = String(room || 'default').trim() || 'default';
   if (!roomsState[name]) {
     roomsState[name] = {
-      meta: { resolution: { ...DEFAULT_RESOLUTION }, currentLayer: '1', logs: [], moderators: [], scenes: {}, presets: {}, sounds: [] },
+      meta: { 
+        resolution: { ...DEFAULT_RESOLUTION }, 
+        currentLayer: '1', 
+        logs: [], 
+        moderators: [], 
+        scenes: {}, 
+        presets: {}, 
+        sounds: [] 
+      },
       objects: {}
     };
   }
@@ -205,7 +212,9 @@ function normalizeObject(input) {
   o.type = String(o.type || 'text');
   o.name = String(o.name || o.type);
   o.text = String(o.text ?? '');
-  o.src = String(o.src ?? '');
+  if (o.type === 'image') o.src = String(o.src ?? '');
+  else if (o.type === 'browser' || o.type === 'video') o.src = normalizeUrl(o.src);
+  else o.src = String(o.src ?? '');
   o.left = Number(o.left) || 0;
   o.top = Number(o.top) || 0;
   o.width = Math.max(16, Number(o.width) || 320);
@@ -225,6 +234,7 @@ function normalizeObject(input) {
   o.radius = Number(o.radius) || 10;
   o.fontSize = Number(o.fontSize) || 42;
   o.fontWeight = Number(o.fontWeight) || 800;
+  o.align = String(o.align || 'center');
   o.qrText = String(o.qrText ?? o.text ?? o.src ?? '');
   o.items = Array.isArray(o.items) ? o.items : [];
   o.data = (o.data && typeof o.data === 'object') ? o.data : {};
