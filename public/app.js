@@ -594,6 +594,7 @@
 
   function renderObject(obj) {
     if (!obj || !obj.visible) return;
+    // В OBS показываем только объекты в live зоне (top < resolution.h)
     if (state.role === 'obs' && obj.top >= state.resolution.h) return;
     buildAssetElement(obj);
   }
@@ -692,7 +693,12 @@
   }
 
   function moveSelectedByScene(deltaY) {
-    [...state.selected].forEach(id => { const obj = state.objects[id]; if (!obj) return; obj.top += deltaY; setObject(id, { top: obj.top }, true); });
+    [...state.selected].forEach(id => { 
+      const obj = state.objects[id]; 
+      if (!obj) return; 
+      obj.top += deltaY; 
+      setObject(id, { top: obj.top }, true); 
+    });
     renderAll();
   }
 
@@ -798,13 +804,14 @@
         el.style.left = `${obj.left}px`;
         el.style.top = `${obj.top}px`;
       }
+      // Мгновенная отправка на сервер для синхронизации
       if (state._updateTimer) clearTimeout(state._updateTimer);
       state._updateTimer = setTimeout(() => {
         if (state.drag) {
           socket.emit('update_element', obj);
         }
         state._updateTimer = null;
-      }, 30);
+      }, 20);
     } else if (state.resize) {
       const obj = state.objects[state.resize.id]; 
       if (!obj) return;
@@ -827,7 +834,7 @@
           socket.emit('update_element', obj);
         }
         state._updateTimer = null;
-      }, 30);
+      }, 20);
     } else if (state.rotate) {
       const obj = state.objects[state.rotate.id]; 
       if (!obj) return;
@@ -844,7 +851,7 @@
           socket.emit('update_element', obj);
         }
         state._updateTimer = null;
-      }, 30);
+      }, 20);
     } else if (state.isPanning) {
       state.panX = state.panStart.panX + (e.clientX - state.panStart.x); 
       state.panY = state.panStart.panY + (e.clientY - state.panStart.y);
@@ -910,12 +917,10 @@
     applyView();
   }
 
-  // ===== ИСПРАВЛЕННАЯ ФУНКЦИЯ onKeyDown =====
   function onKeyDown(e) {
     if (e.code === 'Space') state.spaceDown = true;
     if (state.role !== 'admin') return;
     
-    // ===== ПРОВЕРКА: НЕ УДАЛЯЕМ ОБЪЕКТЫ, ЕСЛИ ФОКУС В ПОЛЕ ВВОДА =====
     const activeElement = document.activeElement;
     const isInputFocused = activeElement && (
       activeElement.tagName === 'INPUT' ||
@@ -926,14 +931,12 @@
     
     const selected = [...state.selected];
     
-    // Если нажали Delete или Backspace и фокус НЕ в поле ввода - удаляем объекты
-    if ((e.key === 'Delete' || e.key === 'Backspace') && !isInputFocused) {
+    if ((e.key === 'Backspace') && !isInputFocused) {
       e.preventDefault();
       selected.forEach(id => removeObject(id));
       return;
     }
     
-    // Стрелки - перемещение объектов (только если фокус не в поле ввода)
     if (['ArrowLeft', 'ArrowRight', 'ArrowUp', 'ArrowDown'].includes(e.key) && !isInputFocused) {
       const step = e.shiftKey ? 20 : 5;
       if (e.key === 'ArrowLeft' && selected.length) {
@@ -1035,10 +1038,18 @@
       const txt = $('#obsLinkText')?.textContent || ''; 
       navigator.clipboard?.writeText(txt); 
     });
+    
+    // ===== ОБРАБОТЧИК ВЫБОРА РАЗРЕШЕНИЯ =====
     $('#resolutionSelect')?.addEventListener('change', () => { 
-      const [w,h] = $('#resolutionSelect').value.split('x').map(Number); 
-      socket.emit('set_resolution', { w, h }); 
+      const [w, h] = $('#resolutionSelect').value.split('x').map(Number); 
+      socket.emit('set_resolution', { w, h }, (res) => {
+        if (res?.ok) {
+          state.resolution = res.resolution;
+          fitToScreen(true);
+        }
+      }); 
     });
+    
     $('#layerSelect')?.addEventListener('change', () => { 
       const layer = $('#layerSelect').value; 
       socket.emit('set_layer', { layer }); 
