@@ -1,7 +1,7 @@
 {
-  "name": "poltergeist-clone-v4",
+  "name": "poltergeist-render",
   "version": "1.0.0",
-  "description": "Poltergeist-style interactive overlay MVP with auth",
+  "description": "Poltergeist overlay with auth",
   "main": "server.js",
   "scripts": {
     "start": "node server.js"
