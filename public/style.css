@@ -189,7 +189,6 @@ html,body{height:100%;margin:0;background:var(--bg);color:#e8e8f0;font-family:sy
   border: none;
 }
 
-/* Стили для модалки модераторов */
 .modal {
   position: fixed;
   top: 0; left: 0;
