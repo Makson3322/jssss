@@ -32,7 +32,6 @@
     _updateTimer: null,
     _lastUpdate: 0,
     _pendingUpdates: {},
-    // Для отслеживания редактирования текста
     _editingText: null,
     _editingUrl: null
   };
@@ -354,7 +353,6 @@
     if (layerPill) layerPill.textContent = `Layer ${state.meta.currentLayer || '1'}`;
   }
 
-  // ===== ИСПРАВЛЕННАЯ ФУНКЦИЯ renderInspector =====
   function renderInspector() {
     const selectedCount = $('#selectedCount');
     const empty = $('#inspectorEmpty');
@@ -381,14 +379,12 @@
     $('#inspAngle').value = Math.round(obj.angle || 0);
     $('#inspOpacity').value = Number(obj.opacity ?? 1);
     
-    // ===== НЕ ПЕРЕЗАПИСЫВАЕМ ТЕКСТ, ЕСЛИ ПОЛЬЗОВАТЕЛЬ РЕДАКТИРУЕТ =====
     const textInput = $('#inspText');
     const urlInput = $('#inspUrl');
     const colorInput = $('#inspColor');
     const fontSizeInput = $('#inspFontSize');
     const fontWeightInput = $('#inspFontWeight');
     
-    // Проверяем, не редактирует ли пользователь поле
     if (textInput && !textInput.matches(':focus')) {
       textInput.value = obj.type === 'qr' ? (obj.qrText || obj.text || obj.src || '') : (obj.text || '');
     }
@@ -631,12 +627,10 @@
   function addImageUrl() { const url = prompt('Image URL:', 'https://'); if (url) createObjectByType('image', { src: url.startsWith('data:') ? url : normalizeUrl(url) }); }
   function addSoundFile(file) { if (!file) return; const reader = new FileReader(); reader.onload = () => createObjectByType('sound', { src: String(reader.result || ''), name: file.name }); reader.readAsDataURL(file); }
 
-  // ===== ИСПРАВЛЕННАЯ ФУНКЦИЯ updateSelectedFromInputs =====
   function updateSelectedFromInputs() {
     const obj = state.objects[[...state.selected][0]]; 
     if (!obj) return;
     
-    // Получаем значения из полей (они уже обновлены через oninput)
     const textValue = $('#inspText')?.value || '';
     const urlValue = $('#inspUrl')?.value || '';
     
@@ -647,7 +641,6 @@
     obj.angle = Number($('#inspAngle').value || 0);
     obj.opacity = Math.max(0, Math.min(1, Number($('#inspOpacity').value || 1)));
     
-    // Обновляем текст и URL
     if (['browser','image','video','sound'].includes(obj.type)) {
       obj.src = normalizeUrl(urlValue);
     }
@@ -917,17 +910,43 @@
     applyView();
   }
 
+  // ===== ИСПРАВЛЕННАЯ ФУНКЦИЯ onKeyDown =====
   function onKeyDown(e) {
     if (e.code === 'Space') state.spaceDown = true;
     if (state.role !== 'admin') return;
+    
+    // ===== ПРОВЕРКА: НЕ УДАЛЯЕМ ОБЪЕКТЫ, ЕСЛИ ФОКУС В ПОЛЕ ВВОДА =====
+    const activeElement = document.activeElement;
+    const isInputFocused = activeElement && (
+      activeElement.tagName === 'INPUT' ||
+      activeElement.tagName === 'TEXTAREA' ||
+      activeElement.tagName === 'SELECT' ||
+      activeElement.isContentEditable
+    );
+    
     const selected = [...state.selected];
-    if (e.key === 'Delete' || e.key === 'Backspace') selected.forEach(id => removeObject(id));
-    const step = e.shiftKey ? 20 : 5;
-    if (e.key === 'ArrowLeft' && selected.length) selected.forEach(id => setObject(id, { left: state.objects[id].left - step }, true));
-    else if (e.key === 'ArrowRight' && selected.length) selected.forEach(id => setObject(id, { left: state.objects[id].left + step }, true));
-    else if (e.key === 'ArrowUp' && selected.length) selected.forEach(id => setObject(id, { top: state.objects[id].top - step }, true));
-    else if (e.key === 'ArrowDown' && selected.length) selected.forEach(id => setObject(id, { top: state.objects[id].top + step }, true));
-    renderAll();
+    
+    // Если нажали Delete или Backspace и фокус НЕ в поле ввода - удаляем объекты
+    if ((e.key === 'Delete' || e.key === 'Backspace') && !isInputFocused) {
+      e.preventDefault();
+      selected.forEach(id => removeObject(id));
+      return;
+    }
+    
+    // Стрелки - перемещение объектов (только если фокус не в поле ввода)
+    if (['ArrowLeft', 'ArrowRight', 'ArrowUp', 'ArrowDown'].includes(e.key) && !isInputFocused) {
+      const step = e.shiftKey ? 20 : 5;
+      if (e.key === 'ArrowLeft' && selected.length) {
+        selected.forEach(id => setObject(id, { left: state.objects[id].left - step }, true));
+      } else if (e.key === 'ArrowRight' && selected.length) {
+        selected.forEach(id => setObject(id, { left: state.objects[id].left + step }, true));
+      } else if (e.key === 'ArrowUp' && selected.length) {
+        selected.forEach(id => setObject(id, { top: state.objects[id].top - step }, true));
+      } else if (e.key === 'ArrowDown' && selected.length) {
+        selected.forEach(id => setObject(id, { top: state.objects[id].top + step }, true));
+      }
+      renderAll();
+    }
   }
 
   function onKeyUp(e) { if (e.code === 'Space') state.spaceDown = false; }
@@ -1010,7 +1029,6 @@
     }
   }
 
-  // ===== ИСПРАВЛЕННАЯ ФУНКЦИЯ wireUI =====
   function wireUI() {
     $('#fitBtn')?.addEventListener('click', () => fitToScreen(true));
     $('#copyObsLinkBtn')?.addEventListener('click', () => { 
@@ -1117,35 +1135,28 @@
       });
     }
     
-    // ===== ИСПОЛЬЗУЕМ oninput ВМЕСТО onchange ДЛЯ ТЕКСТА =====
     const textInput = $('#inspText');
     const urlInput = $('#inspUrl');
     const colorInput = $('#inspColor');
     const fontSizeInput = $('#inspFontSize');
     const fontWeightInput = $('#inspFontWeight');
     
-    // Текст и URL обновляются при каждом вводе
     if (textInput) {
       textInput.addEventListener('input', () => {
         const obj = state.objects[[...state.selected][0]];
         if (!obj) return;
-        // Сохраняем в объект сразу, но не отправляем на сервер до потери фокуса
-        obj._tempText = textInput.value;
-        // Обновляем локально
         if (obj.type === 'qr') {
           obj.qrText = textInput.value.trim();
           obj.text = obj.qrText;
         } else {
           obj.text = textInput.value;
         }
-        // Обновляем элемент на холсте
         const el = assetEl(obj.id);
         if (el) {
           const inner = el.querySelector('.asset-inner');
           if (inner) renderAssetContent(obj, inner);
         }
       });
-      // Отправляем на сервер при потере фокуса
       textInput.addEventListener('blur', updateSelectedFromInputs);
     }
     
@@ -1163,7 +1174,6 @@
       urlInput.addEventListener('blur', updateSelectedFromInputs);
     }
     
-    // Остальные поля – onchange
     const numberFields = ['#inspX', '#inspY', '#inspW', '#inspH', '#inspAngle', '#inspOpacity'];
     numberFields.forEach(sel => {
       const el = document.querySelector(sel);
