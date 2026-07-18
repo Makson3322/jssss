@@ -6,20 +6,17 @@
   const esc = (v) => String(v ?? '').replace(/[&<>"]/g, (m) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[m]));
   const uid = () => `${Date.now().toString(36)}_${Math.random().toString(36).slice(2, 7)}`;
   
-  // Получаем комнату из URL
   const urlParams = new URLSearchParams(location.search);
   const room = urlParams.get('room') || 'default';
   const role = document.body.classList.contains('obs-only') ? 'obs' : 'admin';
   
   console.log(`🏠 Комната: ${room}, Роль: ${role}`);
   
-  const socket = io({ 
-    transports: ['websocket', 'polling'],
-    reconnectionAttempts: 5
-  });
+  const socket = io({ transports: ['websocket', 'polling'] });
 
   const state = {
-    room, role, connected: false,
+    room, role,
+    connected: false,
     resolution: { w: 1920, h: 1080 },
     meta: { logs: [], scenes: {}, presets: {}, sounds: [], currentLayer: '1' },
     objects: {},
@@ -41,8 +38,6 @@
   const layerPill = $('#layerPill');
   const zoomPill = $('#zoomPill');
 
-  console.log('📦 DOM элементы:', { world: !!world, viewport: !!viewport });
-
   function normalizeUrl(input) {
     let url = String(input || '').trim();
     if (!url) return '';
@@ -63,16 +58,6 @@
     const obsLink = `${location.origin}/obs.html?room=${encodeURIComponent(room)}`;
     const obsText = $('#obsLinkText');
     if (obsText) obsText.textContent = obsLink;
-  }
-
-  function incNet() {
-    state.netCounter++;
-    if (netStatus) netStatus.textContent = `NET: ${state.netCounter}/s`;
-    clearTimeout(state._netTimer);
-    state._netTimer = setTimeout(() => {
-      state.netCounter = Math.max(0, state.netCounter - 1);
-      if (netStatus) netStatus.textContent = `NET: ${state.netCounter}/s`;
-    }, 1000);
   }
 
   function applyView() {
@@ -100,7 +85,6 @@
       state.panY = (rect.height - h * scale) / 2;
     }
     applyView();
-    console.log(`📐 Fit view: zoom=${scale.toFixed(2)}, pan=(${state.panX.toFixed(0)},${state.panY.toFixed(0)})`);
   }
 
   function screenToWorld(clientX, clientY) {
@@ -410,7 +394,6 @@
     state.selected.clear(); state.selected.add(obj.id);
     renderSelection();
     if (emit && state.role === 'admin') {
-      console.log('📤 Отправка add_element:', obj.type);
       socket.emit('add_element', obj);
     }
     return obj;
@@ -535,11 +518,9 @@
     host.addEventListener('click', (e) => {
       const btn = e.target.closest('[data-spawn]');
       if (btn) {
-        console.log(`🖱️ Нажата кнопка: ${btn.dataset.spawn}`);
         createObjectByType(btn.dataset.spawn);
       }
     });
-    console.log('✅ Кнопки спавна созданы, количество:', spawnDefs.length);
   }
 
   function selectOnly(id, additive = false) {
@@ -802,7 +783,6 @@
     state.objects = {};
     if (roomState.objects) Object.values(roomState.objects).forEach(obj => { state.objects[obj.id] = normalizeObject(obj); });
     renderAll();
-    console.log(`🔄 Состояние комнаты обновлено, объектов: ${Object.keys(state.objects).length}`);
   }
 
   async function loadModerators() {
@@ -838,27 +818,22 @@
   }
 
   async function initAuth() {
-    console.log('🔐 initAuth, role:', state.role);
     if (state.role === 'obs') {
       currentUsername = 'obs_viewer'; currentRole = 'obs';
       socket.emit('auth', { username: currentUsername });
-      socket.emit('join_room', { room, role: 'obs', username: currentUsername }, (ack) => {
-        console.log('✅ OBS присоединился к комнате:', ack);
-      });
+      socket.emit('join_room', { room, role: 'obs', username: currentUsername });
       setRoomTexts(); fitToScreen(true); renderLists();
       return;
     }
     try {
       const res = await fetch('/api/me');
       if (!res.ok) { 
-        console.log('❌ Не авторизован, редирект на /login');
         window.location.href = '/login'; 
         return; 
       }
       const data = await res.json();
       currentUsername = data.username; currentRole = data.role;
       $('#userName').textContent = currentUsername;
-      console.log(`✅ Авторизован как ${currentUsername} (${currentRole})`);
       
       const modSection = $('#moderatorsSection');
       if (modSection) {
@@ -870,18 +845,15 @@
       }
       
       socket.emit('auth', { username: currentUsername });
-      socket.emit('join_room', { room, role: 'admin', username: currentUsername }, (ack) => {
-        console.log('✅ Присоединился к комнате:', ack);
-      });
+      socket.emit('join_room', { room, role: 'admin', username: currentUsername });
       setRoomTexts(); fitToScreen(true); renderLists();
     } catch(err) { 
-      console.error('❌ Ошибка авторизации:', err);
+      console.error('Ошибка авторизации:', err);
       window.location.href = '/login'; 
     }
   }
 
   function wireUI() {
-    console.log('🔗 wireUI');
     $('#fitBtn')?.addEventListener('click', () => fitToScreen(true));
     $('#copyObsLinkBtn')?.addEventListener('click', () => { const txt = $('#obsLinkText')?.textContent || ''; navigator.clipboard?.writeText(txt); });
     $('#resolutionSelect')?.addEventListener('change', () => { const [w,h] = $('#resolutionSelect').value.split('x').map(Number); socket.emit('set_resolution', { w, h }); });
@@ -953,11 +925,9 @@
 
   socket.on('connect', () => { 
     state.connected = true; 
-    console.log('✅ Socket.IO подключён');
   });
 
   socket.on('room_state', (roomState) => {
-    console.log('📥 Получен room_state');
     syncRoomState(roomState);
   });
 
@@ -969,7 +939,6 @@
   });
 
   socket.on('element_added', (obj) => { 
-    console.log('➕ element_added:', obj.type);
     state.objects[obj.id] = normalizeObject(obj); 
     buildAssetElement(state.objects[obj.id]); 
     renderAll(); 
@@ -977,7 +946,6 @@
   });
 
   socket.on('element_updated', (obj) => {
-    console.log('🔄 element_updated:', obj.id);
     state.objects[obj.id] = normalizeObject({ ...(state.objects[obj.id] || {}), ...obj });
     const el = assetEl(obj.id);
     if(el) { applyAssetStyle(el, state.objects[obj.id]); const inner = el.querySelector('.asset-inner'); if(inner) renderAssetContent(state.objects[obj.id], inner); flashElement(obj.id); }
@@ -986,13 +954,11 @@
   });
 
   socket.on('element_removed', ({ id }) => { 
-    console.log('🗑️ element_removed:', id);
     removeObject(id, false); 
     renderAll(); 
   });
 
   socket.on('canvas_cleared', () => { 
-    console.log('🧹 canvas_cleared');
     state.objects = {}; 
     state.selected.clear(); 
     renderAll(); 
@@ -1013,17 +979,11 @@
 
   socket.on('sounds_stop', () => {});
 
-  // Запуск
-  console.log('🚀 Запуск приложения...');
   bindSpawnButtons();
   wireUI();
   
-  // Ждём загрузки DOM
   if (document.readyState === 'loading') {
-    document.addEventListener('DOMContentLoaded', () => {
-      console.log('📄 DOM загружен');
-      initAuth();
-    });
+    document.addEventListener('DOMContentLoaded', initAuth);
   } else {
     initAuth();
   }
