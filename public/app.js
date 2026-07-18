@@ -16,8 +16,7 @@
     zoom: 1, panX: 0, panY: 0, fitZoom: 1,
     isPanning: false, panStart: null, drag: null, rotate: null, resize: null,
     selecting: false, selectionRect: null, spaceDown: false, lockView: false,
-    spawnBusy: false, netCounter: 0, _netTimer: null,
-    audioElements: {}
+    spawnBusy: false, netCounter: 0, _netTimer: null
   };
 
   let currentUsername = null;
@@ -108,7 +107,7 @@
       radius: 10, fontSize: 42, fontWeight: 700, align: 'center',
       timerMode: 'down', timerDuration: 300000, timerStatus: 'stopped',
       timerRemaining: 300000, endsAt: null, items: [], activeIndex: 0, data: {},
-      muted: false, volume: 1, currentTime: 0, playing: false
+      muted: false, volume: 1, playing: false
     };
     const obj = Object.assign(base, o || {});
     obj.type = String(obj.type || 'text');
@@ -139,7 +138,6 @@
     obj.qrText = String(obj.qrText ?? obj.text ?? obj.src ?? '');
     obj.muted = !!obj.muted;
     obj.volume = Math.max(0, Math.min(1, Number(obj.volume ?? 1)));
-    obj.currentTime = Number(obj.currentTime || 0);
     obj.playing = !!obj.playing;
     if (obj.type === 'timer') {
       obj.timerDuration = Math.max(0, Number(obj.timerDuration || 300000));
@@ -362,7 +360,6 @@
     $('#inspFontSize').value = obj.fontSize || 42;
     $('#inspFontWeight').value = obj.fontWeight || 800;
     
-    // Audio panel
     if (audioPanel) {
       if (['video','browser','sound'].includes(obj.type)) {
         audioPanel.classList.remove('hidden');
@@ -375,7 +372,6 @@
       }
     }
     
-    // Timer panel
     if (timerPanel) {
       if (obj.type === 'timer') {
         timerPanel.classList.remove('hidden');
@@ -618,7 +614,6 @@
     setTimeout(() => { if (el) el.style.boxShadow = ''; }, 300);
   }
 
-  // ----- Audio controls -----
   function toggleAudioPlay() {
     const obj = state.objects[[...state.selected][0]];
     if (!obj || !['video','browser','sound'].includes(obj.type)) return;
@@ -664,7 +659,6 @@
     setObject(obj.id, { muted: obj.muted }, true);
   }
 
-  // ----- Event handlers -----
   function onPointerDown(e) {
     if (state.role !== 'admin') return;
     const handle = e.target.closest('.handle');
@@ -879,12 +873,10 @@
       else alert(data.error);
     });
     
-    // Audio controls
     $('#audioPlayBtn')?.addEventListener('click', toggleAudioPlay);
     $('#audioVolume')?.addEventListener('input', (e) => updateAudioVolume(e.target.value));
     $('#audioMute')?.addEventListener('change', (e) => updateAudioMute(e.target.checked));
     
-    // Timer controls
     $('#timerSetDurationBtn')?.addEventListener('click', () => timerAction('set-duration'));
     $('#timerStartBtn')?.addEventListener('click', () => timerAction('start'));
     $('#timerPauseBtn')?.addEventListener('click', () => timerAction('pause'));
