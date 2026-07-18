@@ -52,6 +52,10 @@
 
       <div class="section">
         <div class="section-title"><span>Image inputs</span><span class="small">file / url</span></div>
+        <div style="margin-top:8px;">
+          <button class="btn sm purple" id="addSoundFileBtn">🎵 Upload MP3</button>
+          <input id="soundFileInput" type="file" accept="audio/*" hidden>
+        </div>
         <div class="grid2">
           <button class="btn sm purple" id="addImageFileBtn">Upload photo</button>
           <button class="btn sm purple" id="addImageUrlBtn">Image by link</button>
@@ -173,6 +177,9 @@
             <tr><th>Opacity</th><td><input id="inspOpacity" type="number" min="0" max="1" step="0.05"></td><td></td></tr>
             <tr><th>Text</th><td colspan="2"><input id="inspText" type="text" placeholder="text / title / QR value"></td></tr>
             <tr><th>URL</th><td colspan="2"><input id="inspUrl" type="text" placeholder="https://..."></td></tr>
+            <tr><th>Color</th><td colspan="2"><input id="inspColor" type="color" value="#ffffff"></td></tr>
+            <tr><th>Font Size</th><td><input id="inspFontSize" type="number" step="1" min="8" max="200" value="42"></td><td>px</td></tr>
+            <tr><th>Font Weight</th><td><input id="inspFontWeight" type="number" step="100" min="100" max="900" value="800"></td><td></td></tr>
           </table>
           <div class="inspector-actions">
             <button class="btn sm green" id="applyPropsBtn">Apply changes</button>
@@ -181,6 +188,17 @@
             <button class="btn sm gold" id="toStageBtn">Move to staging</button>
           </div>
           <div class="timer-panel hidden" id="timerPanel"></div>
+          <div class="audio-panel hidden" id="audioPanel" style="margin-top:12px;border:1px solid rgba(57,255,20,.25);border-radius:14px;padding:10px;background:rgba(57,255,20,.05);">
+              <h4 style="margin:0 0 8px;color:#39ff14;text-transform:uppercase;font-size:12px;letter-spacing:.1em;">🎵 Audio Controls</h4>
+              <div style="display:flex;gap:8px;align-items:center;">
+                <button class="btn sm green" id="audioPlayBtn">▶ Play</button>
+                <label style="font-size:11px;color:var(--muted);display:flex;align-items:center;gap:6px;">
+                  <input type="checkbox" id="audioMute"> Mute
+                </label>
+                <input type="range" id="audioVolume" min="0" max="1" step="0.05" value="1" style="flex:1;">
+                <span id="audioVolumeLabel" style="color:var(--muted);font-size:11px;min-width:30px;">100%</span>
+              </div>
+            </div>
           <div class="inspector-actions" style="margin-top:12px">
             <button class="btn sm red" id="deleteSelectedBtn">Delete selected</button>
             <button class="btn sm red" id="clearAllBtn">Clear canvas</button>
