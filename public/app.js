@@ -29,10 +29,12 @@
     isPanning: false, panStart: null, drag: null, rotate: null, resize: null,
     selecting: false, selectionRect: null, spaceDown: false, lockView: false,
     spawnBusy: false, netCounter: 0, _netTimer: null,
-    // Для плавного обновления
     _updateTimer: null,
     _lastUpdate: 0,
-    _pendingUpdates: {}
+    _pendingUpdates: {},
+    // Для отслеживания редактирования текста
+    _editingText: null,
+    _editingUrl: null
   };
 
   let currentUsername = null;
@@ -352,6 +354,7 @@
     if (layerPill) layerPill.textContent = `Layer ${state.meta.currentLayer || '1'}`;
   }
 
+  // ===== ИСПРАВЛЕННАЯ ФУНКЦИЯ renderInspector =====
   function renderInspector() {
     const selectedCount = $('#selectedCount');
     const empty = $('#inspectorEmpty');
@@ -377,11 +380,30 @@
     $('#inspH').value = Math.round(obj.height);
     $('#inspAngle').value = Math.round(obj.angle || 0);
     $('#inspOpacity').value = Number(obj.opacity ?? 1);
-    $('#inspText').value = obj.type === 'qr' ? (obj.qrText || obj.text || obj.src || '') : (obj.text || '');
-    $('#inspUrl').value = ['browser','image','video','sound'].includes(obj.type) ? (obj.src || '') : '';
-    $('#inspColor').value = obj.color || '#ffffff';
-    $('#inspFontSize').value = obj.fontSize || 42;
-    $('#inspFontWeight').value = obj.fontWeight || 800;
+    
+    // ===== НЕ ПЕРЕЗАПИСЫВАЕМ ТЕКСТ, ЕСЛИ ПОЛЬЗОВАТЕЛЬ РЕДАКТИРУЕТ =====
+    const textInput = $('#inspText');
+    const urlInput = $('#inspUrl');
+    const colorInput = $('#inspColor');
+    const fontSizeInput = $('#inspFontSize');
+    const fontWeightInput = $('#inspFontWeight');
+    
+    // Проверяем, не редактирует ли пользователь поле
+    if (textInput && !textInput.matches(':focus')) {
+      textInput.value = obj.type === 'qr' ? (obj.qrText || obj.text || obj.src || '') : (obj.text || '');
+    }
+    if (urlInput && !urlInput.matches(':focus')) {
+      urlInput.value = ['browser','image','video','sound'].includes(obj.type) ? (obj.src || '') : '';
+    }
+    if (colorInput && !colorInput.matches(':focus')) {
+      colorInput.value = obj.color || '#ffffff';
+    }
+    if (fontSizeInput && !fontSizeInput.matches(':focus')) {
+      fontSizeInput.value = obj.fontSize || 42;
+    }
+    if (fontWeightInput && !fontWeightInput.matches(':focus')) {
+      fontWeightInput.value = obj.fontWeight || 800;
+    }
     
     if (audioPanel) {
       if (['video','browser','sound'].includes(obj.type)) {
@@ -419,7 +441,6 @@
     return obj;
   }
 
-  // Быстрое обновление объекта без полной перерисовки
   function updateObjectLocally(id, patch) {
     const obj = state.objects[id];
     if (!obj) return;
@@ -427,7 +448,6 @@
     const el = assetEl(id);
     if (el) {
       applyAssetStyle(el, obj);
-      // Обновляем содержимое только если изменился текст/цвет/шрифт
       if (patch.text !== undefined || patch.color !== undefined || patch.fontSize !== undefined || patch.fontWeight !== undefined) {
         const inner = el.querySelector('.asset-inner');
         if (inner) renderAssetContent(obj, inner);
@@ -474,9 +494,8 @@
     state.spawnBusy = true;
     
     const h = state.resolution.h;
-    // ===== СПАВН В STAGING ЗОНЕ (нижняя половина) =====
-    const stagingStart = h + 20; // Начало staging зоны
-    const stagingEnd = h * 2 - 100; // Конец staging зоны
+    const stagingStart = h + 20;
+    const stagingEnd = h * 2 - 100;
     const baseY = stagingStart + Math.random() * (stagingEnd - stagingStart - 200);
     const baseX = 50 + Math.random() * Math.max(100, state.resolution.w - 400);
     
@@ -612,16 +631,37 @@
   function addImageUrl() { const url = prompt('Image URL:', 'https://'); if (url) createObjectByType('image', { src: url.startsWith('data:') ? url : normalizeUrl(url) }); }
   function addSoundFile(file) { if (!file) return; const reader = new FileReader(); reader.onload = () => createObjectByType('sound', { src: String(reader.result || ''), name: file.name }); reader.readAsDataURL(file); }
 
+  // ===== ИСПРАВЛЕННАЯ ФУНКЦИЯ updateSelectedFromInputs =====
   function updateSelectedFromInputs() {
-    const obj = state.objects[[...state.selected][0]]; if (!obj) return;
-    obj.left = Number($('#inspX').value || 0); obj.top = Number($('#inspY').value || 0);
-    obj.width = Math.max(16, Number($('#inspW').value || 16)); obj.height = Math.max(16, Number($('#inspH').value || 16));
-    obj.angle = Number($('#inspAngle').value || 0); obj.opacity = Math.max(0, Math.min(1, Number($('#inspOpacity').value || 1)));
-    if (['browser','image','video','sound'].includes(obj.type)) obj.src = normalizeUrl($('#inspUrl').value || '');
-    if (obj.type === 'qr') { obj.qrText = String($('#inspText').value || '').trim(); obj.text = obj.qrText; } else { obj.text = $('#inspText').value || ''; }
+    const obj = state.objects[[...state.selected][0]]; 
+    if (!obj) return;
+    
+    // Получаем значения из полей (они уже обновлены через oninput)
+    const textValue = $('#inspText')?.value || '';
+    const urlValue = $('#inspUrl')?.value || '';
+    
+    obj.left = Number($('#inspX').value || 0);
+    obj.top = Number($('#inspY').value || 0);
+    obj.width = Math.max(16, Number($('#inspW').value || 16));
+    obj.height = Math.max(16, Number($('#inspH').value || 16));
+    obj.angle = Number($('#inspAngle').value || 0);
+    obj.opacity = Math.max(0, Math.min(1, Number($('#inspOpacity').value || 1)));
+    
+    // Обновляем текст и URL
+    if (['browser','image','video','sound'].includes(obj.type)) {
+      obj.src = normalizeUrl(urlValue);
+    }
+    if (obj.type === 'qr') {
+      obj.qrText = textValue.trim();
+      obj.text = obj.qrText;
+    } else {
+      obj.text = textValue;
+    }
+    
     obj.color = $('#inspColor').value || '#ffffff';
     obj.fontSize = Number($('#inspFontSize').value) || 42;
     obj.fontWeight = Number($('#inspFontWeight').value) || 800;
+    
     setObject(obj.id, { 
       left: obj.left, top: obj.top, width: obj.width, height: obj.height, angle: obj.angle, 
       opacity: obj.opacity, src: obj.src, text: obj.text, qrText: obj.qrText,
@@ -650,7 +690,6 @@
       const src = state.objects[id]; if (!src) return;
       const dup = normalizeObject(JSON.parse(JSON.stringify(src)));
       dup.id = uid(); 
-      // Смещаем вниз в staging
       dup.left += 20; 
       dup.top += 120 + Math.random() * 100;
       if (dup.type === 'timer') { dup.endsAt = null; dup.timerStatus = 'stopped'; dup.timerRemaining = dup.timerDuration; }
@@ -759,16 +798,13 @@
     if (state.drag) {
       const obj = state.objects[state.drag.id]; 
       if (!obj) return;
-      // Мгновенное обновление на клиенте
       obj.left = Math.round(state.drag.startObj.left + (pt.x - state.drag.start.x));
       obj.top = Math.round(state.drag.startObj.top + (pt.y - state.drag.start.y));
-      // Обновляем DOM сразу
       const el = assetEl(obj.id);
       if (el) {
         el.style.left = `${obj.left}px`;
         el.style.top = `${obj.top}px`;
       }
-      // Отправляем на сервер с задержкой (но DOM уже обновлён)
       if (state._updateTimer) clearTimeout(state._updateTimer);
       state._updateTimer = setTimeout(() => {
         if (state.drag) {
@@ -785,7 +821,6 @@
       if (h === 'tl') { obj.width = Math.max(24, Math.round(state.resize.startObj.width - dx)); obj.height = Math.max(24, Math.round(state.resize.startObj.height - dy)); obj.left = Math.round(state.resize.startObj.left + dx); obj.top = Math.round(state.resize.startObj.top + dy); }
       if (h === 'tr') { obj.width = Math.max(24, Math.round(state.resize.startObj.width + dx)); obj.height = Math.max(24, Math.round(state.resize.startObj.height - dy)); obj.top = Math.round(state.resize.startObj.top + dy); }
       if (h === 'bl') { obj.width = Math.max(24, Math.round(state.resize.startObj.width - dx)); obj.height = Math.max(24, Math.round(state.resize.startObj.height + dy)); obj.left = Math.round(state.resize.startObj.left + dx); }
-      // Обновляем DOM сразу
       const el = assetEl(obj.id);
       if (el) {
         el.style.left = `${obj.left}px`;
@@ -843,7 +878,6 @@
     state.selectionRect = null;
     viewport.style.cursor = 'default';
     
-    // Отправляем финальное состояние
     if (state.drag) {
       const obj = state.objects[state.drag.id];
       if (obj) {
@@ -976,6 +1010,7 @@
     }
   }
 
+  // ===== ИСПРАВЛЕННАЯ ФУНКЦИЯ wireUI =====
   function wireUI() {
     $('#fitBtn')?.addEventListener('click', () => fitToScreen(true));
     $('#copyObsLinkBtn')?.addEventListener('click', () => { 
@@ -1082,10 +1117,62 @@
       });
     }
     
-    const inspectorFields = document.querySelectorAll(
-      '#inspX, #inspY, #inspW, #inspH, #inspAngle, #inspOpacity, #inspText, #inspUrl, #inspColor, #inspFontSize, #inspFontWeight'
-    );
-    inspectorFields.forEach(el => el?.addEventListener('change', updateSelectedFromInputs));
+    // ===== ИСПОЛЬЗУЕМ oninput ВМЕСТО onchange ДЛЯ ТЕКСТА =====
+    const textInput = $('#inspText');
+    const urlInput = $('#inspUrl');
+    const colorInput = $('#inspColor');
+    const fontSizeInput = $('#inspFontSize');
+    const fontWeightInput = $('#inspFontWeight');
+    
+    // Текст и URL обновляются при каждом вводе
+    if (textInput) {
+      textInput.addEventListener('input', () => {
+        const obj = state.objects[[...state.selected][0]];
+        if (!obj) return;
+        // Сохраняем в объект сразу, но не отправляем на сервер до потери фокуса
+        obj._tempText = textInput.value;
+        // Обновляем локально
+        if (obj.type === 'qr') {
+          obj.qrText = textInput.value.trim();
+          obj.text = obj.qrText;
+        } else {
+          obj.text = textInput.value;
+        }
+        // Обновляем элемент на холсте
+        const el = assetEl(obj.id);
+        if (el) {
+          const inner = el.querySelector('.asset-inner');
+          if (inner) renderAssetContent(obj, inner);
+        }
+      });
+      // Отправляем на сервер при потере фокуса
+      textInput.addEventListener('blur', updateSelectedFromInputs);
+    }
+    
+    if (urlInput) {
+      urlInput.addEventListener('input', () => {
+        const obj = state.objects[[...state.selected][0]];
+        if (!obj || !['browser','image','video','sound'].includes(obj.type)) return;
+        obj.src = urlInput.value;
+        const el = assetEl(obj.id);
+        if (el) {
+          const inner = el.querySelector('.asset-inner');
+          if (inner) renderAssetContent(obj, inner);
+        }
+      });
+      urlInput.addEventListener('blur', updateSelectedFromInputs);
+    }
+    
+    // Остальные поля – onchange
+    const numberFields = ['#inspX', '#inspY', '#inspW', '#inspH', '#inspAngle', '#inspOpacity'];
+    numberFields.forEach(sel => {
+      const el = document.querySelector(sel);
+      if (el) el.addEventListener('change', updateSelectedFromInputs);
+    });
+    
+    if (colorInput) colorInput.addEventListener('input', updateSelectedFromInputs);
+    if (fontSizeInput) fontSizeInput.addEventListener('input', updateSelectedFromInputs);
+    if (fontWeightInput) fontWeightInput.addEventListener('input', updateSelectedFromInputs);
     
     world?.addEventListener('pointerdown', onPointerDown);
     document.addEventListener('pointermove', onPointerMove);
