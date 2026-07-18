@@ -1,3 +1,5 @@
+// ----- ЗАМЕНИТЕ ВЕСЬ ФАЙЛ НА ЭТОТ (исправлена ошибка) -----
+
 (() => {
   console.log('🚀 APP.JS загружен');
   
@@ -12,7 +14,11 @@
   
   console.log(`🏠 Комната: ${room}, Роль: ${role}`);
   
-  const socket = io({ transports: ['websocket', 'polling'] });
+  const socket = io({ 
+    transports: ['websocket', 'polling'],
+    reconnection: true,
+    reconnectionAttempts: 5
+  });
 
   const state = {
     room, role,
@@ -38,6 +44,16 @@
   const layerPill = $('#layerPill');
   const zoomPill = $('#zoomPill');
 
+  function setRoomTexts() {
+    console.log(`🔄 Обновление UI: комната "${room}"`);
+    if (roomPill) {
+      roomPill.textContent = `room: ${room}`;
+    }
+    const obsLink = `${location.origin}/obs.html?room=${encodeURIComponent(room)}`;
+    const obsText = $('#obsLinkText');
+    if (obsText) obsText.textContent = obsLink;
+  }
+
   function normalizeUrl(input) {
     let url = String(input || '').trim();
     if (!url) return '';
@@ -53,11 +69,14 @@
     return state.resolution.h * (state.role === 'admin' ? 2 : 1);
   }
 
-  function setRoomTexts() {
-    if (roomPill) roomPill.textContent = `room: ${room}`;
-    const obsLink = `${location.origin}/obs.html?room=${encodeURIComponent(room)}`;
-    const obsText = $('#obsLinkText');
-    if (obsText) obsText.textContent = obsLink;
+  function incNet() {
+    state.netCounter++;
+    if (netStatus) netStatus.textContent = `NET: ${state.netCounter}/s`;
+    clearTimeout(state._netTimer);
+    state._netTimer = setTimeout(() => {
+      state.netCounter = Math.max(0, state.netCounter - 1);
+      if (netStatus) netStatus.textContent = `NET: ${state.netCounter}/s`;
+    }, 1000);
   }
 
   function applyView() {
@@ -845,7 +864,9 @@
       }
       
       socket.emit('auth', { username: currentUsername });
-      socket.emit('join_room', { room, role: 'admin', username: currentUsername });
+      socket.emit('join_room', { room, role: 'admin', username: currentUsername }, (ack) => {
+        console.log('✅ Присоединился к комнате:', ack);
+      });
       setRoomTexts(); fitToScreen(true); renderLists();
     } catch(err) { 
       console.error('Ошибка авторизации:', err);
@@ -853,40 +874,88 @@
     }
   }
 
+  // ===== ИСПРАВЛЕННАЯ ФУНКЦИЯ wireUI =====
   function wireUI() {
+    console.log('🔗 wireUI');
+    
     $('#fitBtn')?.addEventListener('click', () => fitToScreen(true));
-    $('#copyObsLinkBtn')?.addEventListener('click', () => { const txt = $('#obsLinkText')?.textContent || ''; navigator.clipboard?.writeText(txt); });
-    $('#resolutionSelect')?.addEventListener('change', () => { const [w,h] = $('#resolutionSelect').value.split('x').map(Number); socket.emit('set_resolution', { w, h }); });
-    $('#layerSelect')?.addEventListener('change', () => { const layer = $('#layerSelect').value; socket.emit('set_layer', { layer }); });
+    $('#copyObsLinkBtn')?.addEventListener('click', () => { 
+      const txt = $('#obsLinkText')?.textContent || ''; 
+      navigator.clipboard?.writeText(txt); 
+    });
+    $('#resolutionSelect')?.addEventListener('change', () => { 
+      const [w,h] = $('#resolutionSelect').value.split('x').map(Number); 
+      socket.emit('set_resolution', { w, h }); 
+    });
+    $('#layerSelect')?.addEventListener('change', () => { 
+      const layer = $('#layerSelect').value; 
+      socket.emit('set_layer', { layer }); 
+    });
     $('#clearCanvasBtn')?.addEventListener('click', () => socket.emit('clear_canvas', {}));
     $('#clearAllBtn')?.addEventListener('click', () => socket.emit('clear_canvas', {}));
     $('#deleteBtn')?.addEventListener('click', () => [...state.selected].forEach(id => removeObject(id)));
     $('#deleteSelectedBtn')?.addEventListener('click', () => [...state.selected].forEach(id => removeObject(id)));
     $('#pushLiveBtn')?.addEventListener('click', () => moveSelectedByScene(-state.resolution.h));
     $('#swapBtn')?.addEventListener('click', () => moveSelectedByScene(state.resolution.h));
-    $('#saveSceneBtn')?.addEventListener('click', () => { const name = $('#sceneNameInput').value.trim(); if(name) socket.emit('save_scene', { name }); });
-    $('#savePresetBtn')?.addEventListener('click', () => { const name = $('#presetNameInput').value.trim(); if(name) socket.emit('save_preset', { name }); });
-    $('#addSoundBtn')?.addEventListener('click', () => { const name = $('#soundNameInput').value.trim(); const url = $('#soundUrlInput').value.trim(); if(url) socket.emit('save_sound', { name, url }); });
+    $('#saveSceneBtn')?.addEventListener('click', () => { 
+      const name = $('#sceneNameInput').value.trim(); 
+      if(name) socket.emit('save_scene', { name }); 
+    });
+    $('#savePresetBtn')?.addEventListener('click', () => { 
+      const name = $('#presetNameInput').value.trim(); 
+      if(name) socket.emit('save_preset', { name }); 
+    });
+    $('#addSoundBtn')?.addEventListener('click', () => { 
+      const name = $('#soundNameInput').value.trim(); 
+      const url = $('#soundUrlInput').value.trim(); 
+      if(url) socket.emit('save_sound', { name, url }); 
+    });
     $('#stopAllSoundBtn')?.addEventListener('click', () => socket.emit('stop_sounds', {}));
     $('#applyPropsBtn')?.addEventListener('click', updateSelectedFromInputs);
     $('#dupBtn')?.addEventListener('click', duplicateSelected);
     $('#toLiveBtn')?.addEventListener('click', () => moveSelectedByScene(-state.resolution.h));
     $('#toStageBtn')?.addEventListener('click', () => moveSelectedByScene(state.resolution.h));
     $('#addImageFileBtn')?.addEventListener('click', () => $('#imageFileInput')?.click());
-    $('#imageFileInput')?.addEventListener('change', (e) => { const file = e.target.files?.[0]; if(file) addImageFile(file); e.target.value = ''; });
+    $('#imageFileInput')?.addEventListener('change', (e) => { 
+      const file = e.target.files?.[0]; 
+      if(file) addImageFile(file); 
+      e.target.value = ''; 
+    });
     $('#addImageUrlBtn')?.addEventListener('click', addImageUrl);
     $('#addSoundFileBtn')?.addEventListener('click', () => $('#soundFileInput')?.click());
-    $('#soundFileInput')?.addEventListener('change', (e) => { const file = e.target.files?.[0]; if(file) addSoundFile(file); e.target.value = ''; });
-    $('#sceneList')?.addEventListener('click', (e) => { const btn = e.target.closest('[data-load-scene]'); if(btn) socket.emit('load_scene', { name: btn.dataset.loadScene || btn.getAttribute('data-load-scene') }); });
-    $('#presetList')?.addEventListener('click', (e) => { const btn = e.target.closest('[data-load-preset]'); if(btn) socket.emit('load_preset', { name: btn.dataset.loadPreset || btn.getAttribute('data-load-preset') }); });
-    $('#soundList')?.addEventListener('click', (e) => { const play = e.target.closest('[data-play-sound]'); const del = e.target.closest('[data-remove-sound]'); if(play) socket.emit('play_sound', { id: play.dataset.playSound || play.getAttribute('data-play-sound') }); if(del) socket.emit('remove_sound', { id: del.dataset.removeSound || del.getAttribute('data-remove-sound') }); });
+    $('#soundFileInput')?.addEventListener('change', (e) => { 
+      const file = e.target.files?.[0]; 
+      if(file) addSoundFile(file); 
+      e.target.value = ''; 
+    });
+    $('#sceneList')?.addEventListener('click', (e) => { 
+      const btn = e.target.closest('[data-load-scene]'); 
+      if(btn) socket.emit('load_scene', { name: btn.dataset.loadScene || btn.getAttribute('data-load-scene') }); 
+    });
+    $('#presetList')?.addEventListener('click', (e) => { 
+      const btn = e.target.closest('[data-load-preset]'); 
+      if(btn) socket.emit('load_preset', { name: btn.dataset.loadPreset || btn.getAttribute('data-load-preset') }); 
+    });
+    $('#soundList')?.addEventListener('click', (e) => { 
+      const play = e.target.closest('[data-play-sound]'); 
+      const del = e.target.closest('[data-remove-sound]'); 
+      if(play) socket.emit('play_sound', { id: play.dataset.playSound || play.getAttribute('data-play-sound') }); 
+      if(del) socket.emit('remove_sound', { id: del.dataset.removeSound || del.getAttribute('data-remove-sound') }); 
+    });
     $('#addModeratorBtn')?.addEventListener('click', async () => {
       const name = $('#newModeratorName').value.trim();
       if(!name) return alert('Введите никнейм');
-      const res = await fetch('/api/moderators', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ username: name }) });
+      const res = await fetch('/api/moderators', { 
+        method: 'POST', 
+        headers: { 'Content-Type': 'application/json' }, 
+        body: JSON.stringify({ username: name }) 
+      });
       const data = await res.json();
-      if(res.ok) { alert(`Модератор ${data.username} добавлен. Пароль: ${data.password}`); $('#newModeratorName').value = ''; loadModerators(); }
-      else alert(data.error);
+      if(res.ok) { 
+        alert(`Модератор ${data.username} добавлен. Пароль: ${data.password}`); 
+        $('#newModeratorName').value = ''; 
+        loadModerators(); 
+      } else alert(data.error);
     });
     
     $('#audioPlayBtn')?.addEventListener('click', toggleAudioPlay);
@@ -913,7 +982,13 @@
         }
       });
     }
-    $('#inspX,#inspY,#inspW,#inspH,#inspAngle,#inspOpacity,#inspText,#inspUrl,#inspColor,#inspFontSize,#inspFontWeight').forEach(el => el?.addEventListener('change', updateSelectedFromInputs));
+    
+    // ===== ИСПРАВЛЕНО: используем querySelectorAll для нескольких элементов =====
+    const inspectorFields = document.querySelectorAll(
+      '#inspX, #inspY, #inspW, #inspH, #inspAngle, #inspOpacity, #inspText, #inspUrl, #inspColor, #inspFontSize, #inspFontWeight'
+    );
+    inspectorFields.forEach(el => el?.addEventListener('change', updateSelectedFromInputs));
+    
     world?.addEventListener('pointerdown', onPointerDown);
     document.addEventListener('pointermove', onPointerMove);
     document.addEventListener('pointerup', onPointerUp);
@@ -925,9 +1000,11 @@
 
   socket.on('connect', () => { 
     state.connected = true; 
+    console.log('✅ Socket.IO подключён');
   });
 
   socket.on('room_state', (roomState) => {
+    console.log('📥 Получен room_state, объектов:', Object.keys(roomState.objects || {}).length);
     syncRoomState(roomState);
   });
 
@@ -939,6 +1016,7 @@
   });
 
   socket.on('element_added', (obj) => { 
+    console.log('➕ element_added:', obj.type);
     state.objects[obj.id] = normalizeObject(obj); 
     buildAssetElement(state.objects[obj.id]); 
     renderAll(); 
@@ -946,19 +1024,28 @@
   });
 
   socket.on('element_updated', (obj) => {
+    console.log('🔄 element_updated:', obj.id);
     state.objects[obj.id] = normalizeObject({ ...(state.objects[obj.id] || {}), ...obj });
     const el = assetEl(obj.id);
-    if(el) { applyAssetStyle(el, state.objects[obj.id]); const inner = el.querySelector('.asset-inner'); if(inner) renderAssetContent(state.objects[obj.id], inner); flashElement(obj.id); }
-    else buildAssetElement(state.objects[obj.id]);
+    if(el) { 
+      applyAssetStyle(el, state.objects[obj.id]); 
+      const inner = el.querySelector('.asset-inner'); 
+      if(inner) renderAssetContent(state.objects[obj.id], inner); 
+      flashElement(obj.id); 
+    } else {
+      buildAssetElement(state.objects[obj.id]);
+    }
     if(state.role === 'admin') renderSelection();
   });
 
   socket.on('element_removed', ({ id }) => { 
+    console.log('🗑️ element_removed:', id);
     removeObject(id, false); 
     renderAll(); 
   });
 
   socket.on('canvas_cleared', () => { 
+    console.log('🧹 canvas_cleared');
     state.objects = {}; 
     state.selected.clear(); 
     renderAll(); 
@@ -979,6 +1066,7 @@
 
   socket.on('sounds_stop', () => {});
 
+  // Запуск
   bindSpawnButtons();
   wireUI();
   
@@ -988,5 +1076,8 @@
     initAuth();
   }
   
-  setInterval(() => { updateDynamicTimers(); if(state.role === 'admin' && state.selected.size === 1) renderInspector(); }, 1000);
+  setInterval(() => { 
+    updateDynamicTimers(); 
+    if(state.role === 'admin' && state.selected.size === 1) renderInspector(); 
+  }, 1000);
 })();
