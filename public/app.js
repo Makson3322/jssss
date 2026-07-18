@@ -29,9 +29,10 @@
     isPanning: false, panStart: null, drag: null, rotate: null, resize: null,
     selecting: false, selectionRect: null, spaceDown: false, lockView: false,
     spawnBusy: false, netCounter: 0, _netTimer: null,
-    // Для throttle
+    // Для плавного обновления
     _updateTimer: null,
-    _lastUpdate: 0
+    _lastUpdate: 0,
+    _pendingUpdates: {}
   };
 
   let currentUsername = null;
@@ -44,54 +45,6 @@
   const roomPill = $('#roomPill');
   const layerPill = $('#layerPill');
   const zoomPill = $('#zoomPill');
-
-  // ----- Throttle для обновлений -----
-  function throttle(func, limit = 16) {
-    let lastFunc;
-    let lastRan;
-    return function(...args) {
-      const context = this;
-      if (!lastRan) {
-        func.apply(context, args);
-        lastRan = Date.now();
-      } else {
-        clearTimeout(lastFunc);
-        lastFunc = setTimeout(() => {
-          if ((Date.now() - lastRan) >= limit) {
-            func.apply(context, args);
-            lastRan = Date.now();
-          }
-        }, limit - (Date.now() - lastRan));
-      }
-    };
-  }
-
-  // Throttled версия setObject для drag/resize
-  const throttledSetObject = throttle((id, patch, emit = true) => {
-    const obj = state.objects[id];
-    if (!obj) return;
-    // Проверяем, действительно ли изменились координаты
-    const changed = Object.keys(patch).some(key => {
-      if (key === 'left' || key === 'top' || key === 'width' || key === 'height') {
-        return Math.abs(patch[key] - obj[key]) > 0.5;
-      }
-      return patch[key] !== obj[key];
-    });
-    if (!changed) return;
-    
-    Object.assign(obj, patch);
-    // Обновляем только этот элемент, а не весь холст
-    const el = assetEl(id);
-    if (el) {
-      applyAssetStyle(el, obj);
-      const inner = el.querySelector('.asset-inner');
-      if (inner) renderAssetContent(obj, inner);
-    }
-    if (emit && state.role === 'admin') {
-      socket.emit('update_element', obj);
-    }
-    renderInspector();
-  }, 20); // 20ms задержка
 
   function setRoomTexts() {
     if (roomPill) {
@@ -466,11 +419,26 @@
     return obj;
   }
 
+  // Быстрое обновление объекта без полной перерисовки
+  function updateObjectLocally(id, patch) {
+    const obj = state.objects[id];
+    if (!obj) return;
+    Object.assign(obj, patch);
+    const el = assetEl(id);
+    if (el) {
+      applyAssetStyle(el, obj);
+      // Обновляем содержимое только если изменился текст/цвет/шрифт
+      if (patch.text !== undefined || patch.color !== undefined || patch.fontSize !== undefined || patch.fontWeight !== undefined) {
+        const inner = el.querySelector('.asset-inner');
+        if (inner) renderAssetContent(obj, inner);
+      }
+    }
+  }
+
   function setObject(id, patch, emit = false) {
     const obj = state.objects[id];
     if (!obj) return null;
     Object.assign(obj, patch);
-    // Обновляем только этот элемент
     const el = assetEl(id);
     if (el) {
       applyAssetStyle(el, obj);
@@ -504,9 +472,14 @@
   function createObjectByType(type, opts = {}) {
     if (state.spawnBusy) return null;
     state.spawnBusy = true;
+    
     const h = state.resolution.h;
-    const baseY = h + 120 + Math.random() * 180;
-    const baseX = 150 + Math.random() * Math.max(160, state.resolution.w - 500);
+    // ===== СПАВН В STAGING ЗОНЕ (нижняя половина) =====
+    const stagingStart = h + 20; // Начало staging зоны
+    const stagingEnd = h * 2 - 100; // Конец staging зоны
+    const baseY = stagingStart + Math.random() * (stagingEnd - stagingStart - 200);
+    const baseX = 50 + Math.random() * Math.max(100, state.resolution.w - 400);
+    
     const common = {
       id: uid(), type, left: Math.round(opts.left ?? baseX), top: Math.round(opts.top ?? baseY),
       width: Math.round(opts.width ?? 420), height: Math.round(opts.height ?? 240), angle: 0,
@@ -676,7 +649,10 @@
     ids.forEach(id => {
       const src = state.objects[id]; if (!src) return;
       const dup = normalizeObject(JSON.parse(JSON.stringify(src)));
-      dup.id = uid(); dup.left += 20; dup.top += 20;
+      dup.id = uid(); 
+      // Смещаем вниз в staging
+      dup.left += 20; 
+      dup.top += 120 + Math.random() * 100;
       if (dup.type === 'timer') { dup.endsAt = null; dup.timerStatus = 'stopped'; dup.timerRemaining = dup.timerDuration; }
       addObject(dup); next.push(dup.id);
     });
@@ -781,28 +757,69 @@
     if (state.role !== 'admin') return;
     const pt = screenToWorld(e.clientX, e.clientY);
     if (state.drag) {
-      const obj = state.objects[state.drag.id]; if (!obj) return;
+      const obj = state.objects[state.drag.id]; 
+      if (!obj) return;
+      // Мгновенное обновление на клиенте
       obj.left = Math.round(state.drag.startObj.left + (pt.x - state.drag.start.x));
       obj.top = Math.round(state.drag.startObj.top + (pt.y - state.drag.start.y));
-      // Используем throttled версию
-      throttledSetObject(obj.id, { left: obj.left, top: obj.top }, true);
+      // Обновляем DOM сразу
+      const el = assetEl(obj.id);
+      if (el) {
+        el.style.left = `${obj.left}px`;
+        el.style.top = `${obj.top}px`;
+      }
+      // Отправляем на сервер с задержкой (но DOM уже обновлён)
+      if (state._updateTimer) clearTimeout(state._updateTimer);
+      state._updateTimer = setTimeout(() => {
+        if (state.drag) {
+          socket.emit('update_element', obj);
+        }
+        state._updateTimer = null;
+      }, 30);
     } else if (state.resize) {
-      const obj = state.objects[state.resize.id]; if (!obj) return;
+      const obj = state.objects[state.resize.id]; 
+      if (!obj) return;
       const dx = pt.x - state.resize.start.x, dy = pt.y - state.resize.start.y;
       const h = state.resize.handle;
       if (h === 'br') { obj.width = Math.max(24, Math.round(state.resize.startObj.width + dx)); obj.height = Math.max(24, Math.round(state.resize.startObj.height + dy)); }
       if (h === 'tl') { obj.width = Math.max(24, Math.round(state.resize.startObj.width - dx)); obj.height = Math.max(24, Math.round(state.resize.startObj.height - dy)); obj.left = Math.round(state.resize.startObj.left + dx); obj.top = Math.round(state.resize.startObj.top + dy); }
       if (h === 'tr') { obj.width = Math.max(24, Math.round(state.resize.startObj.width + dx)); obj.height = Math.max(24, Math.round(state.resize.startObj.height - dy)); obj.top = Math.round(state.resize.startObj.top + dy); }
       if (h === 'bl') { obj.width = Math.max(24, Math.round(state.resize.startObj.width - dx)); obj.height = Math.max(24, Math.round(state.resize.startObj.height + dy)); obj.left = Math.round(state.resize.startObj.left + dx); }
-      throttledSetObject(obj.id, { left: obj.left, top: obj.top, width: obj.width, height: obj.height }, true);
+      // Обновляем DOM сразу
+      const el = assetEl(obj.id);
+      if (el) {
+        el.style.left = `${obj.left}px`;
+        el.style.top = `${obj.top}px`;
+        el.style.width = `${obj.width}px`;
+        el.style.height = `${obj.height}px`;
+      }
+      if (state._updateTimer) clearTimeout(state._updateTimer);
+      state._updateTimer = setTimeout(() => {
+        if (state.resize) {
+          socket.emit('update_element', obj);
+        }
+        state._updateTimer = null;
+      }, 30);
     } else if (state.rotate) {
-      const obj = state.objects[state.rotate.id]; if (!obj) return;
+      const obj = state.objects[state.rotate.id]; 
+      if (!obj) return;
       const angle = Math.atan2(pt.y - state.rotate.center.y, pt.x - state.rotate.center.x);
       const deg = Math.round((state.rotate.startAngle + ((angle - state.rotate.startMouseAngle) * 180 / Math.PI)) / 5) * 5;
-      obj.angle = deg; 
-      throttledSetObject(obj.id, { angle: obj.angle }, true);
+      obj.angle = deg;
+      const el = assetEl(obj.id);
+      if (el) {
+        el.style.transform = `rotate(${obj.angle}deg) scale(${obj.scaleX || 1}, ${obj.scaleY || 1})`;
+      }
+      if (state._updateTimer) clearTimeout(state._updateTimer);
+      state._updateTimer = setTimeout(() => {
+        if (state.rotate) {
+          socket.emit('update_element', obj);
+        }
+        state._updateTimer = null;
+      }, 30);
     } else if (state.isPanning) {
-      state.panX = state.panStart.panX + (e.clientX - state.panStart.x); state.panY = state.panStart.panY + (e.clientY - state.panStart.y);
+      state.panX = state.panStart.panX + (e.clientX - state.panStart.x); 
+      state.panY = state.panStart.panY + (e.clientY - state.panStart.y);
       applyView();
     } else if (state.selecting && state.selectionRect) {
       const rect = viewport.getBoundingClientRect();
@@ -820,13 +837,17 @@
 
   function onPointerUp() {
     if (state.role !== 'admin') return;
-    selectionBox.style.display = 'none'; state.selecting = false; state.isPanning = false; state.selectionRect = null;
+    selectionBox.style.display = 'none'; 
+    state.selecting = false; 
+    state.isPanning = false; 
+    state.selectionRect = null;
     viewport.style.cursor = 'default';
-    // При отпускании отправляем финальное обновление
+    
+    // Отправляем финальное состояние
     if (state.drag) {
       const obj = state.objects[state.drag.id];
       if (obj) {
-        // Отменяем throttled, отправляем сразу
+        clearTimeout(state._updateTimer);
         socket.emit('update_element', obj);
       }
       state.drag = null;
@@ -834,6 +855,7 @@
     if (state.resize) {
       const obj = state.objects[state.resize.id];
       if (obj) {
+        clearTimeout(state._updateTimer);
         socket.emit('update_element', obj);
       }
       state.resize = null;
@@ -841,12 +863,12 @@
     if (state.rotate) {
       const obj = state.objects[state.rotate.id];
       if (obj) {
+        clearTimeout(state._updateTimer);
         socket.emit('update_element', obj);
       }
       state.rotate = null;
     }
-    // Сбрасываем throttled таймер
-    clearTimeout(state._updateTimer);
+    state._updateTimer = null;
   }
 
   function onWheel(e) {
