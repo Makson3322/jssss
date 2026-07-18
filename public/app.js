@@ -1,5 +1,3 @@
-// ----- ЗАМЕНИТЕ ВЕСЬ ФАЙЛ НА ЭТОТ (исправлена ошибка) -----
-
 (() => {
   console.log('🚀 APP.JS загружен');
   
@@ -30,7 +28,10 @@
     zoom: 1, panX: 0, panY: 0, fitZoom: 1,
     isPanning: false, panStart: null, drag: null, rotate: null, resize: null,
     selecting: false, selectionRect: null, spaceDown: false, lockView: false,
-    spawnBusy: false, netCounter: 0, _netTimer: null
+    spawnBusy: false, netCounter: 0, _netTimer: null,
+    // Для throttle
+    _updateTimer: null,
+    _lastUpdate: 0
   };
 
   let currentUsername = null;
@@ -44,8 +45,55 @@
   const layerPill = $('#layerPill');
   const zoomPill = $('#zoomPill');
 
+  // ----- Throttle для обновлений -----
+  function throttle(func, limit = 16) {
+    let lastFunc;
+    let lastRan;
+    return function(...args) {
+      const context = this;
+      if (!lastRan) {
+        func.apply(context, args);
+        lastRan = Date.now();
+      } else {
+        clearTimeout(lastFunc);
+        lastFunc = setTimeout(() => {
+          if ((Date.now() - lastRan) >= limit) {
+            func.apply(context, args);
+            lastRan = Date.now();
+          }
+        }, limit - (Date.now() - lastRan));
+      }
+    };
+  }
+
+  // Throttled версия setObject для drag/resize
+  const throttledSetObject = throttle((id, patch, emit = true) => {
+    const obj = state.objects[id];
+    if (!obj) return;
+    // Проверяем, действительно ли изменились координаты
+    const changed = Object.keys(patch).some(key => {
+      if (key === 'left' || key === 'top' || key === 'width' || key === 'height') {
+        return Math.abs(patch[key] - obj[key]) > 0.5;
+      }
+      return patch[key] !== obj[key];
+    });
+    if (!changed) return;
+    
+    Object.assign(obj, patch);
+    // Обновляем только этот элемент, а не весь холст
+    const el = assetEl(id);
+    if (el) {
+      applyAssetStyle(el, obj);
+      const inner = el.querySelector('.asset-inner');
+      if (inner) renderAssetContent(obj, inner);
+    }
+    if (emit && state.role === 'admin') {
+      socket.emit('update_element', obj);
+    }
+    renderInspector();
+  }, 20); // 20ms задержка
+
   function setRoomTexts() {
-    console.log(`🔄 Обновление UI: комната "${room}"`);
     if (roomPill) {
       roomPill.textContent = `room: ${room}`;
     }
@@ -422,9 +470,17 @@
     const obj = state.objects[id];
     if (!obj) return null;
     Object.assign(obj, patch);
-    buildAssetElement(obj);
+    // Обновляем только этот элемент
+    const el = assetEl(id);
+    if (el) {
+      applyAssetStyle(el, obj);
+      const inner = el.querySelector('.asset-inner');
+      if (inner) renderAssetContent(obj, inner);
+    }
     renderInspector();
-    if (emit && state.role === 'admin') socket.emit('update_element', obj);
+    if (emit && state.role === 'admin') {
+      socket.emit('update_element', obj);
+    }
     return obj;
   }
 
@@ -728,7 +784,8 @@
       const obj = state.objects[state.drag.id]; if (!obj) return;
       obj.left = Math.round(state.drag.startObj.left + (pt.x - state.drag.start.x));
       obj.top = Math.round(state.drag.startObj.top + (pt.y - state.drag.start.y));
-      setObject(obj.id, { left: obj.left, top: obj.top }, true);
+      // Используем throttled версию
+      throttledSetObject(obj.id, { left: obj.left, top: obj.top }, true);
     } else if (state.resize) {
       const obj = state.objects[state.resize.id]; if (!obj) return;
       const dx = pt.x - state.resize.start.x, dy = pt.y - state.resize.start.y;
@@ -737,12 +794,13 @@
       if (h === 'tl') { obj.width = Math.max(24, Math.round(state.resize.startObj.width - dx)); obj.height = Math.max(24, Math.round(state.resize.startObj.height - dy)); obj.left = Math.round(state.resize.startObj.left + dx); obj.top = Math.round(state.resize.startObj.top + dy); }
       if (h === 'tr') { obj.width = Math.max(24, Math.round(state.resize.startObj.width + dx)); obj.height = Math.max(24, Math.round(state.resize.startObj.height - dy)); obj.top = Math.round(state.resize.startObj.top + dy); }
       if (h === 'bl') { obj.width = Math.max(24, Math.round(state.resize.startObj.width - dx)); obj.height = Math.max(24, Math.round(state.resize.startObj.height + dy)); obj.left = Math.round(state.resize.startObj.left + dx); }
-      setObject(obj.id, { left: obj.left, top: obj.top, width: obj.width, height: obj.height }, true);
+      throttledSetObject(obj.id, { left: obj.left, top: obj.top, width: obj.width, height: obj.height }, true);
     } else if (state.rotate) {
       const obj = state.objects[state.rotate.id]; if (!obj) return;
       const angle = Math.atan2(pt.y - state.rotate.center.y, pt.x - state.rotate.center.x);
       const deg = Math.round((state.rotate.startAngle + ((angle - state.rotate.startMouseAngle) * 180 / Math.PI)) / 5) * 5;
-      obj.angle = deg; setObject(obj.id, { angle: obj.angle }, true);
+      obj.angle = deg; 
+      throttledSetObject(obj.id, { angle: obj.angle }, true);
     } else if (state.isPanning) {
       state.panX = state.panStart.panX + (e.clientX - state.panStart.x); state.panY = state.panStart.panY + (e.clientY - state.panStart.y);
       applyView();
@@ -764,9 +822,31 @@
     if (state.role !== 'admin') return;
     selectionBox.style.display = 'none'; state.selecting = false; state.isPanning = false; state.selectionRect = null;
     viewport.style.cursor = 'default';
-    if (state.drag) { const obj = state.objects[state.drag.id]; if (obj) socket.emit('update_element', obj); state.drag = null; }
-    if (state.resize) { const obj = state.objects[state.resize.id]; if (obj) socket.emit('update_element', obj); state.resize = null; }
-    if (state.rotate) { const obj = state.objects[state.rotate.id]; if (obj) socket.emit('update_element', obj); state.rotate = null; }
+    // При отпускании отправляем финальное обновление
+    if (state.drag) {
+      const obj = state.objects[state.drag.id];
+      if (obj) {
+        // Отменяем throttled, отправляем сразу
+        socket.emit('update_element', obj);
+      }
+      state.drag = null;
+    }
+    if (state.resize) {
+      const obj = state.objects[state.resize.id];
+      if (obj) {
+        socket.emit('update_element', obj);
+      }
+      state.resize = null;
+    }
+    if (state.rotate) {
+      const obj = state.objects[state.rotate.id];
+      if (obj) {
+        socket.emit('update_element', obj);
+      }
+      state.rotate = null;
+    }
+    // Сбрасываем throttled таймер
+    clearTimeout(state._updateTimer);
   }
 
   function onWheel(e) {
@@ -874,10 +954,7 @@
     }
   }
 
-  // ===== ИСПРАВЛЕННАЯ ФУНКЦИЯ wireUI =====
   function wireUI() {
-    console.log('🔗 wireUI');
-    
     $('#fitBtn')?.addEventListener('click', () => fitToScreen(true));
     $('#copyObsLinkBtn')?.addEventListener('click', () => { 
       const txt = $('#obsLinkText')?.textContent || ''; 
@@ -983,7 +1060,6 @@
       });
     }
     
-    // ===== ИСПРАВЛЕНО: используем querySelectorAll для нескольких элементов =====
     const inspectorFields = document.querySelectorAll(
       '#inspX, #inspY, #inspW, #inspH, #inspAngle, #inspOpacity, #inspText, #inspUrl, #inspColor, #inspFontSize, #inspFontWeight'
     );
@@ -1004,7 +1080,6 @@
   });
 
   socket.on('room_state', (roomState) => {
-    console.log('📥 Получен room_state, объектов:', Object.keys(roomState.objects || {}).length);
     syncRoomState(roomState);
   });
 
@@ -1016,7 +1091,6 @@
   });
 
   socket.on('element_added', (obj) => { 
-    console.log('➕ element_added:', obj.type);
     state.objects[obj.id] = normalizeObject(obj); 
     buildAssetElement(state.objects[obj.id]); 
     renderAll(); 
@@ -1024,7 +1098,6 @@
   });
 
   socket.on('element_updated', (obj) => {
-    console.log('🔄 element_updated:', obj.id);
     state.objects[obj.id] = normalizeObject({ ...(state.objects[obj.id] || {}), ...obj });
     const el = assetEl(obj.id);
     if(el) { 
@@ -1039,13 +1112,11 @@
   });
 
   socket.on('element_removed', ({ id }) => { 
-    console.log('🗑️ element_removed:', id);
     removeObject(id, false); 
     renderAll(); 
   });
 
   socket.on('canvas_cleared', () => { 
-    console.log('🧹 canvas_cleared');
     state.objects = {}; 
     state.selected.clear(); 
     renderAll(); 
@@ -1066,7 +1137,6 @@
 
   socket.on('sounds_stop', () => {});
 
-  // Запуск
   bindSpawnButtons();
   wireUI();
   
