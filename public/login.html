@@ -1,4 +1,3 @@
-<!-- START OF FILE public/login.html -->
 <!DOCTYPE html>
 <html lang="ru">
 <head>
@@ -24,7 +23,7 @@
   <div id="errorMsg" class="error"></div>
 </div>
 <script>
-  const loginAction = async () => {
+  document.getElementById('loginBtn').onclick = async () => {
     const username = document.getElementById('username').value.trim();
     const password = document.getElementById('password').value;
     if(!username || !password) return document.getElementById('errorMsg').innerText = 'Заполните оба поля';
@@ -33,16 +32,6 @@
     if(res.ok) location.href = '/admin.html';
     else document.getElementById('errorMsg').innerText = data.error || 'Ошибка входа';
   };
-
-  document.getElementById('loginBtn').onclick = loginAction;
-
-  // Отправка формы по нажатию Enter
-  document.querySelectorAll('input').forEach(input => {
-    input.addEventListener('keydown', (e) => {
-      if (e.key === 'Enter') loginAction();
-    });
-  });
 </script>
 </body>
 </html>
-<!-- END OF FILE public/login.html -->
