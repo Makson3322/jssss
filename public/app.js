@@ -124,7 +124,6 @@
       radius: 10, fontSize: 42, fontWeight: 700, align: 'center',
       timerMode: 'down', timerDuration: 300000, timerStatus: 'stopped',
       timerRemaining: 300000, endsAt: null, items: [], activeIndex: 0, data: {},
-      // Для секундомера
       stopwatchRunning: false, stopwatchStart: 0, stopwatchElapsed: 0
     };
     const obj = Object.assign(base, o || {});
@@ -234,6 +233,7 @@
     el.classList.toggle('locked', !!obj.locked);
   }
 
+  // ===== СОЗДАНИЕ IFRAME БЕЗ ЗВУКА =====
   function createIframeElement(obj) {
     const iframe = document.createElement('iframe');
     iframe.className = 'asset-content-iframe';
@@ -250,6 +250,7 @@
     let url = obj.src || 'about:blank';
     let embedUrl = url;
     
+    // YouTube - ВСЕГДА БЕЗ ЗВУКА (mute=1)
     if (url.includes('youtube.com/watch') || url.includes('youtu.be') || url.includes('youtube.com/embed')) {
       let videoId = null;
       const patterns = [
@@ -265,29 +266,37 @@
         }
       }
       if (videoId) {
-        embedUrl = `https://www.youtube-nocookie.com/embed/${videoId}?autoplay=1&enablejsapi=1&rel=0&controls=1&modestbranding=1&showinfo=0&origin=${encodeURIComponent(location.origin)}`;
+        embedUrl = `https://www.youtube-nocookie.com/embed/${videoId}?autoplay=1&mute=1&enablejsapi=1&rel=0&controls=1&modestbranding=1&showinfo=0&origin=${encodeURIComponent(location.origin)}`;
       } else {
         embedUrl = url;
       }
     }
+    // Twitch - БЕЗ ЗВУКА (muted=true)
     else if (url.includes('twitch.tv')) {
       const channel = url.match(/twitch\.tv\/([^\/\?]+)/);
       if (channel) {
-        embedUrl = `https://player.twitch.tv/?channel=${channel[1]}&parent=${location.hostname}&autoplay=true`;
+        embedUrl = `https://player.twitch.tv/?channel=${channel[1]}&parent=${location.hostname}&muted=true&autoplay=true`;
       } else {
         embedUrl = url;
       }
     }
+    // Vimeo - БЕЗ ЗВУКА (muted=1)
     else if (url.includes('vimeo.com')) {
       const videoId = url.match(/vimeo\.com\/(\d+)/);
       if (videoId) {
-        embedUrl = `https://player.vimeo.com/video/${videoId[1]}?autoplay=1&loop=0&title=0&byline=0&portrait=0`;
+        embedUrl = `https://player.vimeo.com/video/${videoId[1]}?autoplay=1&muted=1&loop=0&title=0&byline=0&portrait=0`;
       } else {
         embedUrl = url;
       }
     }
+    // Обычный URL - если вставляем просто ссылку, тоже без звука
     else if (url.startsWith('http')) {
-      embedUrl = url;
+      // Добавляем параметр muted если возможно
+      if (url.includes('?')) {
+        embedUrl = url + '&muted=1';
+      } else {
+        embedUrl = url + '?muted=1';
+      }
     } else {
       embedUrl = 'about:blank';
     }
