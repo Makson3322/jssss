@@ -30,7 +30,9 @@
     selecting: false, selectionRect: null, spaceDown: false, lockView: false,
     spawnBusy: false, netCounter: 0, _netTimer: null,
     _updateTimer: null,
-    _lastUpdate: 0
+    _lastUpdate: 0,
+    // Храним созданные iframe отдельно
+    _iframeCache: {}
   };
 
   let currentUsername = null;
@@ -124,9 +126,7 @@
       radius: 10, fontSize: 42, fontWeight: 700, align: 'center',
       timerMode: 'down', timerDuration: 300000, timerStatus: 'stopped',
       timerRemaining: 300000, endsAt: null, items: [], activeIndex: 0, data: {},
-      muted: false, volume: 1, playing: false,
-      // Для синхронизации аудио
-      _audioSynced: false
+      muted: false, volume: 1, playing: false
     };
     const obj = Object.assign(base, o || {});
     obj.type = String(obj.type || 'text');
@@ -220,115 +220,32 @@
     el.classList.toggle('locked', !!obj.locked);
   }
 
-  // ===== ФУНКЦИЯ ДЛЯ ПРИМЕНЕНИЯ АУДИО НАСТРОЕК К IFRAME =====
-  function applyAudioToIframe(iframe, obj) {
-    if (!iframe) return;
-    try {
-      // Отправляем команду в iframe для управления звуком
-      iframe.contentWindow?.postMessage({
-        event: 'command',
-        func: obj.muted ? 'mute' : 'unMute',
-        args: ''
-      }, '*');
-      
-      // Для YouTube через API
-      iframe.contentWindow?.postMessage({
-        event: 'command',
-        func: 'setVolume',
-        args: [obj.volume * 100]
-      }, '*');
-    } catch(e) {
-      // Игнорируем ошибки
-    }
-  }
-
-  // ===== СОЗДАНИЕ IFRAME (ОДИН РАЗ) =====
-  function createIframeElement(obj) {
-    const iframe = document.createElement('iframe');
-    iframe.allow = 'autoplay; encrypted-media; fullscreen; clipboard-read; clipboard-write; picture-in-picture; web-share';
-    iframe.allowFullscreen = true;
-    iframe.referrerPolicy = 'no-referrer-when-downgrade';
-    iframe.style.width = '100%';
-    iframe.style.height = '100%';
-    iframe.style.border = 'none';
-    iframe.style.background = 'transparent';
-    iframe.loading = 'lazy';
-    iframe.sandbox = 'allow-scripts allow-same-origin allow-forms allow-popups allow-presentation';
-    
-    let url = obj.src || 'about:blank';
-    let embedUrl = url;
-    
-    // YouTube
-    if (url.includes('youtube.com/watch') || url.includes('youtu.be') || url.includes('youtube.com/embed')) {
-      let videoId = null;
-      const patterns = [
-        /youtube\.com\/watch\?v=([^&\?]+)/,
-        /youtu\.be\/([^&\?]+)/,
-        /youtube\.com\/embed\/([^&\?]+)/
-      ];
-      for (const pattern of patterns) {
-        const match = url.match(pattern);
-        if (match) {
-          videoId = match[1];
-          break;
-        }
-      }
-      if (videoId) {
-        embedUrl = `https://www.youtube-nocookie.com/embed/${videoId}?autoplay=1&mute=${obj.muted ? 1 : 0}&enablejsapi=1&rel=0&controls=1&modestbranding=1&showinfo=0&origin=${encodeURIComponent(location.origin)}`;
-      } else {
-        embedUrl = url;
-      }
-    }
-    // Twitch
-    else if (url.includes('twitch.tv')) {
-      const channel = url.match(/twitch\.tv\/([^\/\?]+)/);
-      if (channel) {
-        embedUrl = `https://player.twitch.tv/?channel=${channel[1]}&parent=${location.hostname}&muted=${obj.muted ? 'true' : 'false'}&autoplay=true`;
-      } else {
-        embedUrl = url;
-      }
-    }
-    // Vimeo
-    else if (url.includes('vimeo.com')) {
-      const videoId = url.match(/vimeo\.com\/(\d+)/);
-      if (videoId) {
-        embedUrl = `https://player.vimeo.com/video/${videoId[1]}?autoplay=1&loop=0&title=0&byline=0&portrait=0`;
-      } else {
-        embedUrl = url;
-      }
-    }
-    // Обычный URL
-    else if (url.startsWith('http')) {
-      embedUrl = url;
-    } else {
-      embedUrl = 'about:blank';
-    }
-    
-    iframe.src = embedUrl;
-    console.log('🎬 iframe создан:', embedUrl);
-    return iframe;
-  }
-
-  function renderAssetContent(obj, inner) {
+  // ===== СОЗДАНИЕ КОНТЕНТА (ТОЛЬКО ОДИН РАЗ) =====
+  function createAssetContent(obj, inner) {
     inner.innerHTML = '';
     const el = inner.parentElement;
     
     switch (obj.type) {
-      case 'text':
+      case 'text': {
         const textBox = document.createElement('div');
+        textBox.className = 'asset-content-text';
         textBox.style.cssText = `width:100%;height:100%;display:flex;align-items:center;justify-content:center;padding:12px;color:${obj.color || '#fff'};font-size:${obj.fontSize || 34}px;font-weight:${obj.fontWeight || 800};text-align:center;white-space:pre-wrap;word-break:break-word;`;
         textBox.textContent = obj.text || 'Text';
         inner.appendChild(textBox);
         break;
+      }
         
-      case 'shape':
+      case 'shape': {
         const shape = document.createElement('div');
+        shape.className = 'asset-content-shape';
         shape.style.cssText = `width:100%;height:100%;background:${obj.bg || '#7b2cbf'};border-radius:${obj.radius || 10}px;border:${obj.borderWidth || 2}px solid ${obj.borderColor || '#fff'}`;
         inner.appendChild(shape);
         break;
+      }
         
-      case 'image':
+      case 'image': {
         const img = document.createElement('img');
+        img.className = 'asset-content-image';
         img.src = obj.src || createPlaceholderDataUrl('IMAGE');
         img.alt = obj.name || 'image';
         img.draggable = false;
@@ -338,64 +255,104 @@
         img.style.objectFit = 'contain';
         inner.appendChild(img);
         break;
+      }
         
       case 'video':
-      case 'browser':
-        // Проверяем, есть ли уже iframe
-        let iframe = inner.querySelector('iframe');
-        if (iframe) {
-          // Проверяем, нужно ли обновить src (только если изменился видео ID)
-          const newUrl = obj.src || 'about:blank';
-          const currentSrc = iframe.src;
-          let needUpdate = false;
+      case 'browser': {
+        // Проверяем кэш iframe
+        let iframe = state._iframeCache[obj.id];
+        if (!iframe) {
+          iframe = document.createElement('iframe');
+          iframe.className = 'asset-content-iframe';
+          iframe.allow = 'autoplay; encrypted-media; fullscreen; clipboard-read; clipboard-write; picture-in-picture; web-share';
+          iframe.allowFullscreen = true;
+          iframe.referrerPolicy = 'no-referrer-when-downgrade';
+          iframe.style.width = '100%';
+          iframe.style.height = '100%';
+          iframe.style.border = 'none';
+          iframe.style.background = 'transparent';
+          iframe.loading = 'lazy';
+          iframe.sandbox = 'allow-scripts allow-same-origin allow-forms allow-popups allow-presentation';
           
-          // Для YouTube проверяем ID
-          if (newUrl.includes('youtube.com') || newUrl.includes('youtu.be')) {
-            const oldId = currentSrc.match(/embed\/([^\?\&]+)/);
-            const newId = newUrl.match(/(?:v=|youtu\.be\/|embed\/)([^&\?]+)/);
-            if (oldId && newId && oldId[1] !== newId[1]) {
-              needUpdate = true;
-            } else if (!oldId && newId) {
-              needUpdate = true;
+          // Устанавливаем src
+          let url = obj.src || 'about:blank';
+          let embedUrl = url;
+          
+          // YouTube
+          if (url.includes('youtube.com/watch') || url.includes('youtu.be') || url.includes('youtube.com/embed')) {
+            let videoId = null;
+            const patterns = [
+              /youtube\.com\/watch\?v=([^&\?]+)/,
+              /youtu\.be\/([^&\?]+)/,
+              /youtube\.com\/embed\/([^&\?]+)/
+            ];
+            for (const pattern of patterns) {
+              const match = url.match(pattern);
+              if (match) {
+                videoId = match[1];
+                break;
+              }
             }
-          } else if (currentSrc !== newUrl && !currentSrc.includes(newUrl)) {
-            needUpdate = true;
+            if (videoId) {
+              embedUrl = `https://www.youtube-nocookie.com/embed/${videoId}?autoplay=1&mute=${obj.muted ? 1 : 0}&enablejsapi=1&rel=0&controls=1&modestbranding=1&showinfo=0&origin=${encodeURIComponent(location.origin)}`;
+            } else {
+              embedUrl = url;
+            }
+          }
+          // Twitch
+          else if (url.includes('twitch.tv')) {
+            const channel = url.match(/twitch\.tv\/([^\/\?]+)/);
+            if (channel) {
+              embedUrl = `https://player.twitch.tv/?channel=${channel[1]}&parent=${location.hostname}&muted=${obj.muted ? 'true' : 'false'}&autoplay=true`;
+            } else {
+              embedUrl = url;
+            }
+          }
+          // Vimeo
+          else if (url.includes('vimeo.com')) {
+            const videoId = url.match(/vimeo\.com\/(\d+)/);
+            if (videoId) {
+              embedUrl = `https://player.vimeo.com/video/${videoId[1]}?autoplay=1&loop=0&title=0&byline=0&portrait=0`;
+            } else {
+              embedUrl = url;
+            }
+          }
+          // Обычный URL
+          else if (url.startsWith('http')) {
+            embedUrl = url;
+          } else {
+            embedUrl = 'about:blank';
           }
           
-          if (needUpdate) {
-            const newIframe = createIframeElement(obj);
-            inner.replaceChild(newIframe, iframe);
-            if (el) el._iframe = newIframe;
-            // Применяем аудио настройки
-            setTimeout(() => applyAudioToIframe(newIframe, obj), 500);
-          } else {
-            // Применяем аудио настройки к существующему iframe
-            applyAudioToIframe(iframe, obj);
-          }
+          iframe.src = embedUrl;
+          state._iframeCache[obj.id] = iframe;
+          if (el) el._iframe = iframe;
+          console.log('🎬 iframe создан для', obj.id, ':', embedUrl);
         } else {
-          // Создаём новый iframe
-          const newIframe = createIframeElement(obj);
-          if (el) el._iframe = newIframe;
-          inner.appendChild(newIframe);
-          // Применяем аудио настройки
-          setTimeout(() => applyAudioToIframe(newIframe, obj), 500);
+          // Копируем ссылку на iframe в элемент
+          if (el) el._iframe = iframe;
         }
+        inner.appendChild(iframe);
         break;
+      }
         
-      case 'qr':
+      case 'qr': {
         inner.appendChild(qrNode(obj.qrText || obj.text || obj.src || ''));
         break;
+      }
         
-      case 'timer':
+      case 'timer': {
         const wrap = document.createElement('div');
+        wrap.className = 'asset-content-timer';
         wrap.style.cssText = 'width:100%;height:100%;display:flex;align-items:center;justify-content:center;font-weight:900;color:#ff0;font-size:42px;text-shadow:3px 3px 0 #000;';
-        wrap.className = 'timer-content';
         wrap.textContent = formatTimer(obj);
         inner.appendChild(wrap);
         break;
+      }
         
-      case 'sound':
+      case 'sound': {
         const audio = document.createElement('audio');
+        audio.className = 'asset-content-audio';
         audio.src = normalizeUrl(obj.src || '');
         audio.controls = true;
         audio.style.width = '100%';
@@ -407,13 +364,78 @@
         if (el) el._audio = audio;
         inner.appendChild(audio);
         break;
+      }
         
-      default:
+      default: {
         const def = document.createElement('div');
+        def.className = 'asset-content-default';
         def.style.cssText = `width:100%;height:100%;display:flex;align-items:center;justify-content:center;color:${obj.color||'#fff'};font-size:${obj.fontSize||30}px;font-weight:${obj.fontWeight||700};text-align:center;padding:12px;word-break:break-word;`;
         def.textContent = obj.text || obj.type;
         inner.appendChild(def);
+      }
     }
+  }
+
+  // ===== ОБНОВЛЕНИЕ ТОЛЬКО ТЕКСТА/ЦВЕТА (БЕЗ ПЕРЕСОЗДАНИЯ) =====
+  function updateAssetContent(obj, inner) {
+    // Находим дочерние элементы по классам и обновляем только их содержимое
+    const textEl = inner.querySelector('.asset-content-text');
+    if (textEl) {
+      textEl.textContent = obj.text || 'Text';
+      textEl.style.color = obj.color || '#ffffff';
+      textEl.style.fontSize = (obj.fontSize || 34) + 'px';
+      textEl.style.fontWeight = (obj.fontWeight || 800);
+      return;
+    }
+    
+    const shapeEl = inner.querySelector('.asset-content-shape');
+    if (shapeEl) {
+      shapeEl.style.background = obj.bg || '#7b2cbf';
+      shapeEl.style.borderRadius = (obj.radius || 10) + 'px';
+      shapeEl.style.border = `${obj.borderWidth || 2}px solid ${obj.borderColor || '#fff'}`;
+      return;
+    }
+    
+    const imgEl = inner.querySelector('.asset-content-image');
+    if (imgEl) {
+      if (imgEl.src !== obj.src && obj.src) {
+        imgEl.src = obj.src;
+      }
+      return;
+    }
+    
+    const timerEl = inner.querySelector('.asset-content-timer');
+    if (timerEl) {
+      timerEl.textContent = formatTimer(obj);
+      return;
+    }
+    
+    const audioEl = inner.querySelector('.asset-content-audio');
+    if (audioEl) {
+      if (audioEl.src !== obj.src && obj.src) {
+        audioEl.src = normalizeUrl(obj.src || '');
+      }
+      audioEl.volume = obj.volume || 1;
+      audioEl.muted = obj.muted || false;
+      if (obj.playing) {
+        audioEl.play().catch(() => {});
+      } else {
+        audioEl.pause();
+      }
+      return;
+    }
+    
+    const defaultEl = inner.querySelector('.asset-content-default');
+    if (defaultEl) {
+      defaultEl.textContent = obj.text || obj.type;
+      defaultEl.style.color = obj.color || '#ffffff';
+      defaultEl.style.fontSize = (obj.fontSize || 30) + 'px';
+      defaultEl.style.fontWeight = (obj.fontWeight || 700);
+      return;
+    }
+    
+    // Если ничего не нашли - пересоздаём полностью
+    createAssetContent(obj, inner);
   }
 
   function buildAssetElement(obj) {
@@ -440,7 +462,15 @@
     applyAssetStyle(el, obj);
     const inner = el.querySelector('.asset-inner');
     const tag = el.querySelector('.name-tag');
-    renderAssetContent(obj, inner);
+    
+    // Создаём содержимое только если оно пустое
+    if (!inner.hasChildNodes()) {
+      createAssetContent(obj, inner);
+    } else {
+      // Иначе обновляем только то, что может измениться (текст, цвет)
+      updateAssetContent(obj, inner);
+    }
+    
     tag.textContent = `${(obj.name || obj.type).toUpperCase()} • L${obj.layer}`;
     if (state.role === 'obs') {
       el.classList.remove('selected');
@@ -558,12 +588,8 @@
     const obj = state.objects[id];
     if (!obj) return null;
     
-    // Проверяем, изменился ли src
+    // Проверяем, меняется ли src
     const srcChanged = patch.src !== undefined && patch.src !== obj.src;
-    // Проверяем, изменились ли аудио настройки
-    const audioChanged = (patch.muted !== undefined && patch.muted !== obj.muted) ||
-                         (patch.volume !== undefined && patch.volume !== obj.volume) ||
-                         (patch.playing !== undefined && patch.playing !== obj.playing);
     
     Object.assign(obj, patch);
     const el = assetEl(id);
@@ -571,23 +597,15 @@
       applyAssetStyle(el, obj);
       const inner = el.querySelector('.asset-inner');
       if (inner) {
-        // Если изменился src или текст/цвет - перерисовываем
-        if (srcChanged || patch.text !== undefined || patch.color !== undefined || 
-            patch.fontSize !== undefined || patch.fontWeight !== undefined) {
-          renderAssetContent(obj, inner);
-        } else if (audioChanged && ['video','browser','sound'].includes(obj.type)) {
-          // Если изменились только аудио настройки - применяем их без перерисовки
-          const iframe = el._iframe;
-          if (iframe) {
-            applyAudioToIframe(iframe, obj);
-          }
-          const audio = el._audio;
-          if (audio) {
-            audio.volume = obj.volume || 1;
-            audio.muted = obj.muted || false;
-            if (obj.playing) audio.play().catch(() => {});
-            else audio.pause();
-          }
+        // Если меняется src для видео/браузера - нужно пересоздать iframe
+        if (srcChanged && ['video','browser'].includes(obj.type)) {
+          // Удаляем старый iframe из кэша
+          delete state._iframeCache[id];
+          // Пересоздаём содержимое
+          createAssetContent(obj, inner);
+        } else {
+          // Иначе просто обновляем текст/цвет
+          updateAssetContent(obj, inner);
         }
       }
     }
@@ -601,6 +619,7 @@
   function removeObject(id, emit = true) {
     const el = assetEl(id); if (el) el.remove();
     delete state.objects[id];
+    delete state._iframeCache[id];
     state.selected.delete(id);
     renderSelection();
     if (emit && state.role === 'admin') socket.emit('remove_element', { id });
@@ -735,10 +754,12 @@
       const obj = state.objects[id]; 
       if (!obj || !obj.visible) {
         el.remove();
+        delete state._iframeCache[id];
         return;
       }
       if (state.role === 'obs' && obj.top >= state.resolution.h) {
         el.remove();
+        delete state._iframeCache[id];
         return;
       }
     });
@@ -750,7 +771,10 @@
     Object.values(state.objects).forEach(obj => {
       if (obj.type !== 'timer') return;
       const el = assetEl(obj.id);
-      if (el) { const tc = el.querySelector('.timer-content'); if (tc) tc.textContent = formatTimer(obj); }
+      if (el) { 
+        const tc = el.querySelector('.asset-content-timer');
+        if (tc) tc.textContent = formatTimer(obj);
+      }
       if (obj.timerStatus === 'running' && getTimerRemaining(obj) <= 0) {
         obj.timerStatus = 'stopped';
         obj.timerRemaining = 0;
@@ -853,11 +877,7 @@
     obj.playing = !obj.playing;
     const el = assetEl(obj.id);
     if (el) {
-      const iframe = el._iframe;
       const audio = el._audio;
-      if (iframe) {
-        iframe.contentWindow?.postMessage('{"event":"command","func":"' + (obj.playing ? 'playVideo' : 'pauseVideo') + '","args":""}', '*');
-      }
       if (audio) {
         if (obj.playing) audio.play().catch(() => {});
         else audio.pause();
@@ -875,10 +895,6 @@
     if (el) {
       const audio = el._audio;
       if (audio) audio.volume = obj.volume;
-      const iframe = el._iframe;
-      if (iframe) {
-        applyAudioToIframe(iframe, obj);
-      }
     }
     setObject(obj.id, { volume: obj.volume }, true);
     $('#audioVolumeLabel').textContent = Math.round(obj.volume * 100) + '%';
@@ -892,18 +908,12 @@
     if (el) {
       const audio = el._audio;
       if (audio) audio.muted = obj.muted;
-      const iframe = el._iframe;
-      if (iframe) {
-        applyAudioToIframe(iframe, obj);
-      }
     }
     setObject(obj.id, { muted: obj.muted }, true);
-    renderInspector();
   }
 
   function onPointerDown(e) {
     if (state.role !== 'admin') return;
-    // Игнорируем клики внутри iframe
     if (e.target.closest('iframe') || e.target.closest('video') || e.target.closest('audio')) {
       return;
     }
@@ -1106,6 +1116,7 @@
     state.meta = roomState.meta || state.meta;
     state.resolution = state.meta.resolution || state.resolution;
     state.objects = {};
+    state._iframeCache = {};
     if (roomState.objects) Object.values(roomState.objects).forEach(obj => { state.objects[obj.id] = normalizeObject(obj); });
     renderAll();
   }
@@ -1312,7 +1323,7 @@
         const el = assetEl(obj.id);
         if (el) {
           const inner = el.querySelector('.asset-inner');
-          if (inner) renderAssetContent(obj, inner);
+          if (inner) updateAssetContent(obj, inner);
         }
       });
       textInput.addEventListener('blur', updateSelectedFromInputs);
@@ -1326,7 +1337,7 @@
         const el = assetEl(obj.id);
         if (el) {
           const inner = el.querySelector('.asset-inner');
-          if (inner) renderAssetContent(obj, inner);
+          if (inner) updateAssetContent(obj, inner);
         }
       });
       urlInput.addEventListener('blur', updateSelectedFromInputs);
@@ -1380,7 +1391,7 @@
     if(el) { 
       applyAssetStyle(el, state.objects[obj.id]); 
       const inner = el.querySelector('.asset-inner'); 
-      if(inner) renderAssetContent(state.objects[obj.id], inner); 
+      if(inner) updateAssetContent(state.objects[obj.id], inner);
       flashElement(obj.id); 
     } else {
       buildAssetElement(state.objects[obj.id]);
@@ -1395,6 +1406,7 @@
 
   socket.on('canvas_cleared', () => { 
     state.objects = {}; 
+    state._iframeCache = {};
     state.selected.clear(); 
     renderAll(); 
   });
