@@ -30,8 +30,6 @@
     selecting: false, selectionRect: null, spaceDown: false, lockView: false,
     spawnBusy: false, netCounter: 0, _netTimer: null,
     _updateTimer: null,
-    _lastUpdate: 0,
-    // Храним созданные iframe отдельно
     _iframeCache: {}
   };
 
@@ -126,7 +124,8 @@
       radius: 10, fontSize: 42, fontWeight: 700, align: 'center',
       timerMode: 'down', timerDuration: 300000, timerStatus: 'stopped',
       timerRemaining: 300000, endsAt: null, items: [], activeIndex: 0, data: {},
-      muted: false, volume: 1, playing: false
+      // Для секундомера
+      stopwatchRunning: false, stopwatchStart: 0, stopwatchElapsed: 0
     };
     const obj = Object.assign(base, o || {});
     obj.type = String(obj.type || 'text');
@@ -155,14 +154,16 @@
     obj.items = Array.isArray(obj.items) ? obj.items : [];
     obj.data = (obj.data && typeof obj.data === 'object') ? obj.data : {};
     obj.qrText = String(obj.qrText ?? obj.text ?? obj.src ?? '');
-    obj.muted = !!obj.muted;
-    obj.volume = Math.max(0, Math.min(1, Number(obj.volume ?? 1)));
-    obj.playing = !!obj.playing;
     if (obj.type === 'timer') {
       obj.timerDuration = Math.max(0, Number(obj.timerDuration || 300000));
       obj.timerStatus = ['running','paused','stopped'].includes(obj.timerStatus) ? obj.timerStatus : 'stopped';
       obj.timerRemaining = Math.max(0, Number(obj.timerRemaining || obj.timerDuration || 0));
       obj.endsAt = obj.timerStatus === 'running' ? Number(obj.endsAt || (Date.now() + obj.timerRemaining)) : null;
+    }
+    if (obj.type === 'stopwatch') {
+      obj.stopwatchRunning = !!obj.stopwatchRunning;
+      obj.stopwatchStart = Number(obj.stopwatchStart) || 0;
+      obj.stopwatchElapsed = Number(obj.stopwatchElapsed) || 0;
     }
     return obj;
   }
@@ -206,6 +207,19 @@
     return [Math.floor(s/3600), Math.floor((s%3600)/60), s%60].map(v=>v.toString().padStart(2,'0')).join(':');
   }
 
+  function formatStopwatch(obj) {
+    let elapsed = obj.stopwatchElapsed || 0;
+    if (obj.stopwatchRunning) {
+      elapsed += (Date.now() - (obj.stopwatchStart || 0));
+    }
+    const totalMs = Math.max(0, elapsed);
+    const hours = Math.floor(totalMs / 3600000);
+    const minutes = Math.floor((totalMs % 3600000) / 60000);
+    const seconds = Math.floor((totalMs % 60000) / 1000);
+    const ms = Math.floor((totalMs % 1000) / 100);
+    return `${String(hours).padStart(2,'0')}:${String(minutes).padStart(2,'0')}:${String(seconds).padStart(2,'0')}.${ms}`;
+  }
+
   function assetEl(id) { return world ? world.querySelector(`.asset[data-id="${CSS.escape(id)}"]`) : null; }
 
   function applyAssetStyle(el, obj) {
@@ -220,7 +234,68 @@
     el.classList.toggle('locked', !!obj.locked);
   }
 
-  // ===== СОЗДАНИЕ КОНТЕНТА (ТОЛЬКО ОДИН РАЗ) =====
+  function createIframeElement(obj) {
+    const iframe = document.createElement('iframe');
+    iframe.className = 'asset-content-iframe';
+    iframe.allow = 'autoplay; encrypted-media; fullscreen; clipboard-read; clipboard-write; picture-in-picture; web-share';
+    iframe.allowFullscreen = true;
+    iframe.referrerPolicy = 'no-referrer-when-downgrade';
+    iframe.style.width = '100%';
+    iframe.style.height = '100%';
+    iframe.style.border = 'none';
+    iframe.style.background = 'transparent';
+    iframe.loading = 'lazy';
+    iframe.sandbox = 'allow-scripts allow-same-origin allow-forms allow-popups allow-presentation';
+    
+    let url = obj.src || 'about:blank';
+    let embedUrl = url;
+    
+    if (url.includes('youtube.com/watch') || url.includes('youtu.be') || url.includes('youtube.com/embed')) {
+      let videoId = null;
+      const patterns = [
+        /youtube\.com\/watch\?v=([^&\?]+)/,
+        /youtu\.be\/([^&\?]+)/,
+        /youtube\.com\/embed\/([^&\?]+)/
+      ];
+      for (const pattern of patterns) {
+        const match = url.match(pattern);
+        if (match) {
+          videoId = match[1];
+          break;
+        }
+      }
+      if (videoId) {
+        embedUrl = `https://www.youtube-nocookie.com/embed/${videoId}?autoplay=1&enablejsapi=1&rel=0&controls=1&modestbranding=1&showinfo=0&origin=${encodeURIComponent(location.origin)}`;
+      } else {
+        embedUrl = url;
+      }
+    }
+    else if (url.includes('twitch.tv')) {
+      const channel = url.match(/twitch\.tv\/([^\/\?]+)/);
+      if (channel) {
+        embedUrl = `https://player.twitch.tv/?channel=${channel[1]}&parent=${location.hostname}&autoplay=true`;
+      } else {
+        embedUrl = url;
+      }
+    }
+    else if (url.includes('vimeo.com')) {
+      const videoId = url.match(/vimeo\.com\/(\d+)/);
+      if (videoId) {
+        embedUrl = `https://player.vimeo.com/video/${videoId[1]}?autoplay=1&loop=0&title=0&byline=0&portrait=0`;
+      } else {
+        embedUrl = url;
+      }
+    }
+    else if (url.startsWith('http')) {
+      embedUrl = url;
+    } else {
+      embedUrl = 'about:blank';
+    }
+    
+    iframe.src = embedUrl;
+    return iframe;
+  }
+
   function createAssetContent(obj, inner) {
     inner.innerHTML = '';
     const el = inner.parentElement;
@@ -259,77 +334,12 @@
         
       case 'video':
       case 'browser': {
-        // Проверяем кэш iframe
         let iframe = state._iframeCache[obj.id];
         if (!iframe) {
-          iframe = document.createElement('iframe');
-          iframe.className = 'asset-content-iframe';
-          iframe.allow = 'autoplay; encrypted-media; fullscreen; clipboard-read; clipboard-write; picture-in-picture; web-share';
-          iframe.allowFullscreen = true;
-          iframe.referrerPolicy = 'no-referrer-when-downgrade';
-          iframe.style.width = '100%';
-          iframe.style.height = '100%';
-          iframe.style.border = 'none';
-          iframe.style.background = 'transparent';
-          iframe.loading = 'lazy';
-          iframe.sandbox = 'allow-scripts allow-same-origin allow-forms allow-popups allow-presentation';
-          
-          // Устанавливаем src
-          let url = obj.src || 'about:blank';
-          let embedUrl = url;
-          
-          // YouTube
-          if (url.includes('youtube.com/watch') || url.includes('youtu.be') || url.includes('youtube.com/embed')) {
-            let videoId = null;
-            const patterns = [
-              /youtube\.com\/watch\?v=([^&\?]+)/,
-              /youtu\.be\/([^&\?]+)/,
-              /youtube\.com\/embed\/([^&\?]+)/
-            ];
-            for (const pattern of patterns) {
-              const match = url.match(pattern);
-              if (match) {
-                videoId = match[1];
-                break;
-              }
-            }
-            if (videoId) {
-              embedUrl = `https://www.youtube-nocookie.com/embed/${videoId}?autoplay=1&mute=${obj.muted ? 1 : 0}&enablejsapi=1&rel=0&controls=1&modestbranding=1&showinfo=0&origin=${encodeURIComponent(location.origin)}`;
-            } else {
-              embedUrl = url;
-            }
-          }
-          // Twitch
-          else if (url.includes('twitch.tv')) {
-            const channel = url.match(/twitch\.tv\/([^\/\?]+)/);
-            if (channel) {
-              embedUrl = `https://player.twitch.tv/?channel=${channel[1]}&parent=${location.hostname}&muted=${obj.muted ? 'true' : 'false'}&autoplay=true`;
-            } else {
-              embedUrl = url;
-            }
-          }
-          // Vimeo
-          else if (url.includes('vimeo.com')) {
-            const videoId = url.match(/vimeo\.com\/(\d+)/);
-            if (videoId) {
-              embedUrl = `https://player.vimeo.com/video/${videoId[1]}?autoplay=1&loop=0&title=0&byline=0&portrait=0`;
-            } else {
-              embedUrl = url;
-            }
-          }
-          // Обычный URL
-          else if (url.startsWith('http')) {
-            embedUrl = url;
-          } else {
-            embedUrl = 'about:blank';
-          }
-          
-          iframe.src = embedUrl;
+          iframe = createIframeElement(obj);
           state._iframeCache[obj.id] = iframe;
           if (el) el._iframe = iframe;
-          console.log('🎬 iframe создан для', obj.id, ':', embedUrl);
         } else {
-          // Копируем ссылку на iframe в элемент
           if (el) el._iframe = iframe;
         }
         inner.appendChild(iframe);
@@ -350,19 +360,12 @@
         break;
       }
         
-      case 'sound': {
-        const audio = document.createElement('audio');
-        audio.className = 'asset-content-audio';
-        audio.src = normalizeUrl(obj.src || '');
-        audio.controls = true;
-        audio.style.width = '100%';
-        audio.style.height = '100%';
-        audio.style.objectFit = 'contain';
-        audio.volume = obj.volume || 1;
-        audio.muted = obj.muted || false;
-        if (obj.playing) audio.play().catch(() => {});
-        if (el) el._audio = audio;
-        inner.appendChild(audio);
+      case 'stopwatch': {
+        const wrap = document.createElement('div');
+        wrap.className = 'asset-content-stopwatch';
+        wrap.style.cssText = 'width:100%;height:100%;display:flex;align-items:center;justify-content:center;font-weight:900;color:#39ff14;font-size:42px;text-shadow:3px 3px 0 #000;font-family:monospace;';
+        wrap.textContent = formatStopwatch(obj);
+        inner.appendChild(wrap);
         break;
       }
         
@@ -376,9 +379,7 @@
     }
   }
 
-  // ===== ОБНОВЛЕНИЕ ТОЛЬКО ТЕКСТА/ЦВЕТА (БЕЗ ПЕРЕСОЗДАНИЯ) =====
   function updateAssetContent(obj, inner) {
-    // Находим дочерние элементы по классам и обновляем только их содержимое
     const textEl = inner.querySelector('.asset-content-text');
     if (textEl) {
       textEl.textContent = obj.text || 'Text';
@@ -410,18 +411,9 @@
       return;
     }
     
-    const audioEl = inner.querySelector('.asset-content-audio');
-    if (audioEl) {
-      if (audioEl.src !== obj.src && obj.src) {
-        audioEl.src = normalizeUrl(obj.src || '');
-      }
-      audioEl.volume = obj.volume || 1;
-      audioEl.muted = obj.muted || false;
-      if (obj.playing) {
-        audioEl.play().catch(() => {});
-      } else {
-        audioEl.pause();
-      }
+    const stopwatchEl = inner.querySelector('.asset-content-stopwatch');
+    if (stopwatchEl) {
+      stopwatchEl.textContent = formatStopwatch(obj);
       return;
     }
     
@@ -433,9 +425,6 @@
       defaultEl.style.fontWeight = (obj.fontWeight || 700);
       return;
     }
-    
-    // Если ничего не нашли - пересоздаём полностью
-    createAssetContent(obj, inner);
   }
 
   function buildAssetElement(obj) {
@@ -463,11 +452,9 @@
     const inner = el.querySelector('.asset-inner');
     const tag = el.querySelector('.name-tag');
     
-    // Создаём содержимое только если оно пустое
     if (!inner.hasChildNodes()) {
       createAssetContent(obj, inner);
     } else {
-      // Иначе обновляем только то, что может измениться (текст, цвет)
       updateAssetContent(obj, inner);
     }
     
@@ -496,7 +483,7 @@
     if (logs) logs.innerHTML = state.meta.logs.slice(0,50).map(e => `<div class="entry"><span class="ts">[${new Date(e.ts).toLocaleTimeString()}]</span><span class="actor">${esc(e.actor)}:</span><span>${esc(e.message)}</span></div>`).join('');
     if (scenes) scenes.innerHTML = Object.keys(state.meta.scenes).length ? Object.keys(state.meta.scenes).map(n => `<div class="item"><button class="btn sm row" data-load-scene="${esc(n)}"><span>${esc(n)}</span><span>load</span></button></div>`).join('') : '<div class="item">No scenes saved.</div>';
     if (presets) presets.innerHTML = Object.keys(state.meta.presets).length ? Object.keys(state.meta.presets).map(n => `<div class="item"><button class="btn sm row" data-load-preset="${esc(n)}"><span>${esc(n)}</span><span>load</span></button></div>`).join('') : '<div class="item">No presets saved.</div>';
-    if (sounds) sounds.innerHTML = state.meta.sounds.length ? state.meta.sounds.map(s => `<div class="item"><div style="display:flex;justify-content:space-between;align-items:center;"><span>${esc(s.name)}</span><span>${Math.round((s.volume||1)*100)}%</span></div><div style="display:flex;gap:6px;margin-top:6px;"><button class="btn sm green" data-play-sound="${esc(s.id)}">Play</button><button class="btn sm red" data-remove-sound="${esc(s.id)}">Del</button></div></div>`).join('') : '<div class="item">No sounds added.</div>';
+    if (sounds) sounds.innerHTML = state.meta.sounds.length ? state.meta.sounds.map(s => `<div class="item"><div style="display:flex;justify-content:space-between;align-items:center;"><span>${esc(s.name)}</span></div><div style="display:flex;gap:6px;margin-top:6px;"><button class="btn sm green" data-play-sound="${esc(s.id)}">Play</button><button class="btn sm red" data-remove-sound="${esc(s.id)}">Del</button></div></div>`).join('') : '<div class="item">No sounds added.</div>';
     if (layerPill) layerPill.textContent = `Layer ${state.meta.currentLayer || '1'}`;
   }
 
@@ -504,14 +491,14 @@
     const selectedCount = $('#selectedCount');
     const empty = $('#inspectorEmpty');
     const body = $('#inspectorBody');
-    const audioPanel = $('#audioPanel');
     const timerPanel = $('#timerPanel');
+    const stopwatchPanel = $('#stopwatchPanel');
     
     if (selectedCount) selectedCount.textContent = `${state.selected.size} selected`;
     if (!state.selected.size || state.role !== 'admin') {
       empty?.classList.remove('hidden'); body?.classList.add('hidden');
-      if (audioPanel) audioPanel.classList.add('hidden');
       if (timerPanel) timerPanel.classList.add('hidden');
+      if (stopwatchPanel) stopwatchPanel.classList.add('hidden');
       return;
     }
     const obj = state.objects[[...state.selected][0]];
@@ -536,7 +523,7 @@
       textInput.value = obj.type === 'qr' ? (obj.qrText || obj.text || obj.src || '') : (obj.text || '');
     }
     if (urlInput && !urlInput.matches(':focus')) {
-      urlInput.value = ['browser','image','video','sound'].includes(obj.type) ? (obj.src || '') : '';
+      urlInput.value = ['browser','image','video'].includes(obj.type) ? (obj.src || '') : '';
     }
     if (colorInput && !colorInput.matches(':focus')) {
       colorInput.value = obj.color || '#ffffff';
@@ -548,18 +535,6 @@
       fontWeightInput.value = obj.fontWeight || 800;
     }
     
-    if (audioPanel) {
-      if (['video','browser','sound'].includes(obj.type)) {
-        audioPanel.classList.remove('hidden');
-        $('#audioVolume').value = obj.volume || 1;
-        $('#audioMute').checked = !!obj.muted;
-        $('#audioPlayBtn').textContent = obj.playing ? '⏸ Pause' : '▶ Play';
-        $('#audioVolumeLabel').textContent = Math.round((obj.volume || 1) * 100) + '%';
-      } else {
-        audioPanel.classList.add('hidden');
-      }
-    }
-    
     if (timerPanel) {
       if (obj.type === 'timer') {
         timerPanel.classList.remove('hidden');
@@ -568,6 +543,16 @@
         $('#timerRemainingText').textContent = formatTimer(obj);
       } else {
         timerPanel.classList.add('hidden');
+      }
+    }
+    
+    if (stopwatchPanel) {
+      if (obj.type === 'stopwatch') {
+        stopwatchPanel.classList.remove('hidden');
+        $('#stopwatchStatusText').textContent = obj.stopwatchRunning ? '▶ Running' : '⏸ Stopped';
+        $('#stopwatchTimeText').textContent = formatStopwatch(obj);
+      } else {
+        stopwatchPanel.classList.add('hidden');
       }
     }
   }
@@ -588,25 +573,13 @@
     const obj = state.objects[id];
     if (!obj) return null;
     
-    // Проверяем, меняется ли src
-    const srcChanged = patch.src !== undefined && patch.src !== obj.src;
-    
     Object.assign(obj, patch);
     const el = assetEl(id);
     if (el) {
       applyAssetStyle(el, obj);
       const inner = el.querySelector('.asset-inner');
       if (inner) {
-        // Если меняется src для видео/браузера - нужно пересоздать iframe
-        if (srcChanged && ['video','browser'].includes(obj.type)) {
-          // Удаляем старый iframe из кэша
-          delete state._iframeCache[id];
-          // Пересоздаём содержимое
-          createAssetContent(obj, inner);
-        } else {
-          // Иначе просто обновляем текст/цвет
-          updateAssetContent(obj, inner);
-        }
+        updateAssetContent(obj, inner);
       }
     }
     renderInspector();
@@ -627,8 +600,8 @@
 
   const spawnDefs = [
     ['text', '📝 Text'], ['shape', '🟦 Shape'], ['image', '🖼 Image'],
-    ['browser', '🌐 Browser'], ['video', '🎬 Video'], ['sound', '🔊 Sound'],
-    ['qr', '📱 QR code'], ['timer', '⏱ Timer'],
+    ['browser', '🌐 Browser'], ['video', '🎬 Video'],
+    ['qr', '📱 QR code'], ['timer', '⏱ Timer'], ['stopwatch', '⏱️ Stopwatch'],
     ['ticker', '📜 Ticker'], ['progress', '📈 Progress'], ['eventlist', '📜 Event list'],
     ['alertbox', '🔔 Alert'], ['todolist', '✅ To-do'], ['mediashare', '📺 Media share'],
     ['customcode', '🧩 Custom code']
@@ -652,8 +625,7 @@
       bg: opts.bg || 'rgba(123,44,191,.2)', borderColor: opts.borderColor || '#7b2cbf',
       borderWidth: opts.borderWidth ?? 2, radius: opts.radius ?? 12, fontSize: opts.fontSize ?? 36,
       fontWeight: opts.fontWeight ?? 800, align: opts.align || 'center', data: opts.data || {},
-      items: opts.items || [], zIndex: Date.now() % 100000,
-      volume: opts.volume ?? 1, muted: opts.muted ?? false, playing: opts.playing ?? false
+      items: opts.items || [], zIndex: Date.now() % 100000
     };
     
     if (type === 'text') {
@@ -672,15 +644,6 @@
     } else if (type === 'video' || type === 'browser') {
       common.src = opts.src || prompt('URL (YouTube/Twitch/any):', 'https://www.youtube.com/watch?v=dQw4w9WgXcQ') || 'about:blank';
       common.width = opts.width || 760; common.height = opts.height || 480;
-      common.volume = 1;
-      common.muted = false;
-    } else if (type === 'sound') {
-      common.src = opts.src || prompt('Audio URL (MP3/WAV):', '') || '';
-      common.width = opts.width || 400; common.height = opts.height || 80;
-      common.bg = 'rgba(0,0,0,.3)';
-      common.volume = 1;
-      common.muted = false;
-      common.text = opts.text || '🎵 Audio Player';
     } else if (type === 'qr') {
       common.qrText = opts.text || prompt('QR text / URL:', location.href) || location.href;
       common.width = opts.width || 260; common.height = opts.height || 260;
@@ -692,6 +655,13 @@
       common.timerDuration = Math.max(1, seconds) * 1000;
       common.timerRemaining = common.timerDuration;
       common.timerStatus = 'stopped';
+    } else if (type === 'stopwatch') {
+      common.width = opts.width || 360; common.height = opts.height || 160;
+      common.bg = 'rgba(0,0,0,.4)'; common.color = '#39ff14';
+      common.stopwatchRunning = false;
+      common.stopwatchStart = 0;
+      common.stopwatchElapsed = 0;
+      common.text = '⏱️ Stopwatch';
     } else if (type === 'ticker') {
       common.text = opts.text || prompt('Ticker text:', 'Breaking news...') || 'Breaking news...';
       common.width = opts.width || 900; common.height = opts.height || 100;
@@ -769,24 +739,31 @@
 
   function updateDynamicTimers() {
     Object.values(state.objects).forEach(obj => {
-      if (obj.type !== 'timer') return;
-      const el = assetEl(obj.id);
-      if (el) { 
-        const tc = el.querySelector('.asset-content-timer');
-        if (tc) tc.textContent = formatTimer(obj);
+      if (obj.type === 'timer') {
+        const el = assetEl(obj.id);
+        if (el) { 
+          const tc = el.querySelector('.asset-content-timer');
+          if (tc) tc.textContent = formatTimer(obj);
+        }
+        if (obj.timerStatus === 'running' && getTimerRemaining(obj) <= 0) {
+          obj.timerStatus = 'stopped';
+          obj.timerRemaining = 0;
+          obj.endsAt = null;
+          setObject(obj.id, { timerStatus: 'stopped', timerRemaining: 0, endsAt: null }, true);
+        }
       }
-      if (obj.timerStatus === 'running' && getTimerRemaining(obj) <= 0) {
-        obj.timerStatus = 'stopped';
-        obj.timerRemaining = 0;
-        obj.endsAt = null;
-        setObject(obj.id, { timerStatus: 'stopped', timerRemaining: 0, endsAt: null }, true);
+      if (obj.type === 'stopwatch') {
+        const el = assetEl(obj.id);
+        if (el) { 
+          const sw = el.querySelector('.asset-content-stopwatch');
+          if (sw) sw.textContent = formatStopwatch(obj);
+        }
       }
     });
   }
 
   function addImageFile(file) { if (!file) return; const reader = new FileReader(); reader.onload = () => createObjectByType('image', { src: String(reader.result || '') }); reader.readAsDataURL(file); }
   function addImageUrl() { const url = prompt('Image URL:', 'https://'); if (url) createObjectByType('image', { src: url.startsWith('data:') ? url : normalizeUrl(url) }); }
-  function addSoundFile(file) { if (!file) return; const reader = new FileReader(); reader.onload = () => createObjectByType('sound', { src: String(reader.result || ''), name: file.name }); reader.readAsDataURL(file); }
 
   function updateSelectedFromInputs() {
     const obj = state.objects[[...state.selected][0]]; 
@@ -802,7 +779,7 @@
     obj.angle = Number($('#inspAngle').value || 0);
     obj.opacity = Math.max(0, Math.min(1, Number($('#inspOpacity').value || 1)));
     
-    if (['browser','image','video','sound'].includes(obj.type)) {
+    if (['browser','image','video'].includes(obj.type)) {
       obj.src = normalizeUrl(urlValue);
     }
     if (obj.type === 'qr') {
@@ -824,15 +801,73 @@
   }
 
   function timerAction(action) {
-    const obj = state.objects[[...state.selected][0]]; if (!obj || obj.type !== 'timer') return;
+    const obj = state.objects[[...state.selected][0]]; 
+    if (!obj || obj.type !== 'timer') return;
     const durMs = Math.max(0, Math.round(Number($('#timerDurationInput')?.value || 0) * 1000));
-    if (action === 'set-duration') { obj.timerDuration = durMs; if (obj.timerStatus !== 'running') obj.timerRemaining = durMs; if (obj.timerStatus === 'running') obj.endsAt = Date.now() + durMs; }
-    else if (action === 'start') { const remaining = obj.timerRemaining > 0 ? obj.timerRemaining : (obj.timerDuration || durMs || 0); obj.timerStatus = 'running'; obj.endsAt = Date.now() + remaining; obj.timerRemaining = remaining; }
-    else if (action === 'pause') { if (obj.timerStatus === 'running') { obj.timerRemaining = getTimerRemaining(obj); obj.timerStatus = 'paused'; obj.endsAt = null; } }
-    else if (action === 'stop' || action === 'reset') { obj.timerStatus = 'stopped'; obj.endsAt = null; obj.timerRemaining = obj.timerDuration || durMs || 0; }
-    else if (action === 'add10') { obj.timerRemaining = Math.max(0, getTimerRemaining(obj) + 10000); obj.timerDuration = obj.timerRemaining; if (obj.timerStatus === 'running') obj.endsAt = Date.now() + obj.timerRemaining; }
-    else if (action === 'sub10') { obj.timerRemaining = Math.max(0, getTimerRemaining(obj) - 10000); obj.timerDuration = obj.timerRemaining; if (obj.timerStatus === 'running') obj.endsAt = Date.now() + obj.timerRemaining; }
+    if (action === 'set-duration') { 
+      obj.timerDuration = durMs; 
+      if (obj.timerStatus !== 'running') obj.timerRemaining = durMs; 
+      if (obj.timerStatus === 'running') obj.endsAt = Date.now() + durMs; 
+    }
+    else if (action === 'start') { 
+      const remaining = obj.timerRemaining > 0 ? obj.timerRemaining : (obj.timerDuration || durMs || 0); 
+      obj.timerStatus = 'running'; 
+      obj.endsAt = Date.now() + remaining; 
+      obj.timerRemaining = remaining; 
+    }
+    else if (action === 'pause') { 
+      if (obj.timerStatus === 'running') { 
+        obj.timerRemaining = getTimerRemaining(obj); 
+        obj.timerStatus = 'paused'; 
+        obj.endsAt = null; 
+      } 
+    }
+    else if (action === 'stop' || action === 'reset') { 
+      obj.timerStatus = 'stopped'; 
+      obj.endsAt = null; 
+      obj.timerRemaining = obj.timerDuration || durMs || 0; 
+    }
+    else if (action === 'add10') { 
+      obj.timerRemaining = Math.max(0, getTimerRemaining(obj) + 10000); 
+      obj.timerDuration = obj.timerRemaining; 
+      if (obj.timerStatus === 'running') obj.endsAt = Date.now() + obj.timerRemaining; 
+    }
+    else if (action === 'sub10') { 
+      obj.timerRemaining = Math.max(0, getTimerRemaining(obj) - 10000); 
+      obj.timerDuration = obj.timerRemaining; 
+      if (obj.timerStatus === 'running') obj.endsAt = Date.now() + obj.timerRemaining; 
+    }
     setObject(obj.id, { timerDuration: obj.timerDuration, timerStatus: obj.timerStatus, timerRemaining: obj.timerRemaining, endsAt: obj.endsAt }, true);
+    renderInspector();
+  }
+
+  function stopwatchAction(action) {
+    const obj = state.objects[[...state.selected][0]]; 
+    if (!obj || obj.type !== 'stopwatch') return;
+    
+    if (action === 'start') {
+      if (!obj.stopwatchRunning) {
+        obj.stopwatchRunning = true;
+        obj.stopwatchStart = Date.now();
+      }
+    }
+    else if (action === 'pause') {
+      if (obj.stopwatchRunning) {
+        obj.stopwatchRunning = false;
+        obj.stopwatchElapsed += (Date.now() - (obj.stopwatchStart || 0));
+        obj.stopwatchStart = 0;
+      }
+    }
+    else if (action === 'reset') {
+      obj.stopwatchRunning = false;
+      obj.stopwatchStart = 0;
+      obj.stopwatchElapsed = 0;
+    }
+    setObject(obj.id, { 
+      stopwatchRunning: obj.stopwatchRunning, 
+      stopwatchStart: obj.stopwatchStart, 
+      stopwatchElapsed: obj.stopwatchElapsed 
+    }, true);
     renderInspector();
   }
 
@@ -847,6 +882,7 @@
       dup.left += 20; 
       dup.top += 120 + Math.random() * 100;
       if (dup.type === 'timer') { dup.endsAt = null; dup.timerStatus = 'stopped'; dup.timerRemaining = dup.timerDuration; }
+      if (dup.type === 'stopwatch') { dup.stopwatchRunning = false; dup.stopwatchStart = 0; dup.stopwatchElapsed = 0; }
       addObject(dup); next.push(dup.id);
     });
     state.selected = new Set(next); renderSelection();
@@ -871,50 +907,9 @@
     setTimeout(() => { if (el) el.style.boxShadow = ''; }, 300);
   }
 
-  function toggleAudioPlay() {
-    const obj = state.objects[[...state.selected][0]];
-    if (!obj || !['video','browser','sound'].includes(obj.type)) return;
-    obj.playing = !obj.playing;
-    const el = assetEl(obj.id);
-    if (el) {
-      const audio = el._audio;
-      if (audio) {
-        if (obj.playing) audio.play().catch(() => {});
-        else audio.pause();
-      }
-    }
-    setObject(obj.id, { playing: obj.playing }, true);
-    renderInspector();
-  }
-
-  function updateAudioVolume(value) {
-    const obj = state.objects[[...state.selected][0]];
-    if (!obj || !['video','browser','sound'].includes(obj.type)) return;
-    obj.volume = Math.max(0, Math.min(1, Number(value)));
-    const el = assetEl(obj.id);
-    if (el) {
-      const audio = el._audio;
-      if (audio) audio.volume = obj.volume;
-    }
-    setObject(obj.id, { volume: obj.volume }, true);
-    $('#audioVolumeLabel').textContent = Math.round(obj.volume * 100) + '%';
-  }
-
-  function updateAudioMute(checked) {
-    const obj = state.objects[[...state.selected][0]];
-    if (!obj || !['video','browser','sound'].includes(obj.type)) return;
-    obj.muted = !!checked;
-    const el = assetEl(obj.id);
-    if (el) {
-      const audio = el._audio;
-      if (audio) audio.muted = obj.muted;
-    }
-    setObject(obj.id, { muted: obj.muted }, true);
-  }
-
   function onPointerDown(e) {
     if (state.role !== 'admin') return;
-    if (e.target.closest('iframe') || e.target.closest('video') || e.target.closest('audio')) {
+    if (e.target.closest('iframe') || e.target.closest('video')) {
       return;
     }
     const handle = e.target.closest('.handle');
@@ -1243,12 +1238,6 @@
       e.target.value = ''; 
     });
     $('#addImageUrlBtn')?.addEventListener('click', addImageUrl);
-    $('#addSoundFileBtn')?.addEventListener('click', () => $('#soundFileInput')?.click());
-    $('#soundFileInput')?.addEventListener('change', (e) => { 
-      const file = e.target.files?.[0]; 
-      if(file) addSoundFile(file); 
-      e.target.value = ''; 
-    });
     $('#sceneList')?.addEventListener('click', (e) => { 
       const btn = e.target.closest('[data-load-scene]'); 
       if(btn) socket.emit('load_scene', { name: btn.dataset.loadScene || btn.getAttribute('data-load-scene') }); 
@@ -1279,10 +1268,6 @@
       } else alert(data.error);
     });
     
-    $('#audioPlayBtn')?.addEventListener('click', toggleAudioPlay);
-    $('#audioVolume')?.addEventListener('input', (e) => updateAudioVolume(e.target.value));
-    $('#audioMute')?.addEventListener('change', (e) => updateAudioMute(e.target.checked));
-    
     $('#timerSetDurationBtn')?.addEventListener('click', () => timerAction('set-duration'));
     $('#timerStartBtn')?.addEventListener('click', () => timerAction('start'));
     $('#timerPauseBtn')?.addEventListener('click', () => timerAction('pause'));
@@ -1290,6 +1275,10 @@
     $('#timerResetBtn')?.addEventListener('click', () => timerAction('reset'));
     $('#timerPlus10Btn')?.addEventListener('click', () => timerAction('add10'));
     $('#timerMinus10Btn')?.addEventListener('click', () => timerAction('sub10'));
+    
+    $('#stopwatchStartBtn')?.addEventListener('click', () => stopwatchAction('start'));
+    $('#stopwatchPauseBtn')?.addEventListener('click', () => stopwatchAction('pause'));
+    $('#stopwatchResetBtn')?.addEventListener('click', () => stopwatchAction('reset'));
     
     const modal = $('#moderatorModal');
     if(modal) {
@@ -1332,7 +1321,7 @@
     if (urlInput) {
       urlInput.addEventListener('input', () => {
         const obj = state.objects[[...state.selected][0]];
-        if (!obj || !['browser','image','video','sound'].includes(obj.type)) return;
+        if (!obj || !['browser','image','video'].includes(obj.type)) return;
         obj.src = urlInput.value;
         const el = assetEl(obj.id);
         if (el) {
@@ -1438,5 +1427,5 @@
   setInterval(() => { 
     updateDynamicTimers(); 
     if(state.role === 'admin' && state.selected.size === 1) renderInspector(); 
-  }, 1000);
+  }, 100);
 })();
