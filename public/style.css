@@ -281,6 +281,7 @@ body.obs-only { overflow: hidden !important; }
   .rightbar{display:none}
 }
 
+/* Стили для модалки и аудио */
 .modal {
   position: fixed;
   top: 0; left: 0;
