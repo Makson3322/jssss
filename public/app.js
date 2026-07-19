@@ -233,7 +233,6 @@
     el.classList.toggle('locked', !!obj.locked);
   }
 
-  // ===== СОЗДАНИЕ IFRAME БЕЗ ЗВУКА =====
   function createIframeElement(obj) {
     const iframe = document.createElement('iframe');
     iframe.className = 'asset-content-iframe';
@@ -250,7 +249,6 @@
     let url = obj.src || 'about:blank';
     let embedUrl = url;
     
-    // YouTube - ВСЕГДА БЕЗ ЗВУКА (mute=1)
     if (url.includes('youtube.com/watch') || url.includes('youtu.be') || url.includes('youtube.com/embed')) {
       let videoId = null;
       const patterns = [
@@ -271,7 +269,6 @@
         embedUrl = url;
       }
     }
-    // Twitch - БЕЗ ЗВУКА (muted=true)
     else if (url.includes('twitch.tv')) {
       const channel = url.match(/twitch\.tv\/([^\/\?]+)/);
       if (channel) {
@@ -280,7 +277,6 @@
         embedUrl = url;
       }
     }
-    // Vimeo - БЕЗ ЗВУКА (muted=1)
     else if (url.includes('vimeo.com')) {
       const videoId = url.match(/vimeo\.com\/(\d+)/);
       if (videoId) {
@@ -289,9 +285,7 @@
         embedUrl = url;
       }
     }
-    // Обычный URL - если вставляем просто ссылку, тоже без звука
     else if (url.startsWith('http')) {
-      // Добавляем параметр muted если возможно
       if (url.includes('?')) {
         embedUrl = url + '&muted=1';
       } else {
@@ -924,41 +918,86 @@
     const handle = e.target.closest('.handle');
     const asset = e.target.closest('.asset');
     const pt = screenToWorld(e.clientX, e.clientY);
+    
     if (handle && asset) {
-      const id = asset.dataset.id; const obj = state.objects[id]; if (!obj || obj.locked) return;
+      const id = asset.dataset.id;
+      const obj = state.objects[id];
+      if (!obj || obj.locked) return;
       selectOnly(id);
-      if (['br','tl','tr','bl'].includes(handle.dataset.handle)) { 
-        state.resize = { id, start: pt, handle: handle.dataset.handle, startObj: { ...obj } }; 
-      } else if (handle.dataset.handle === 'rot') { 
-        const cx = obj.left + obj.width/2, cy = obj.top + obj.height/2; 
-        state.rotate = { id, center: { x: cx, y: cy }, startAngle: obj.angle || 0, startMouseAngle: Math.atan2(pt.y-cy, pt.x-cx) }; 
+      
+      // ===== ОБРАБОТКА ХЕНДЛОВ =====
+      if (['br','tl','tr','bl'].includes(handle.dataset.handle)) {
+        state.resize = {
+          id,
+          start: pt,
+          handle: handle.dataset.handle,
+          startObj: { ...obj }
+        };
+      } else if (handle.dataset.handle === 'rot') {
+        const cx = obj.left + obj.width / 2;
+        const cy = obj.top + obj.height / 2;
+        state.rotate = {
+          id,
+          center: { x: cx, y: cy },
+          startAngle: obj.angle || 0,
+          startMouseAngle: Math.atan2(pt.y - cy, pt.x - cx)
+        };
       }
-      e.preventDefault(); return;
+      e.preventDefault();
+      return;
     }
+    
     if (asset) {
-      const id = asset.dataset.id; const obj = state.objects[id]; if (!obj) return;
-      if (e.shiftKey) { if (state.selected.has(id)) state.selected.delete(id); else state.selected.add(id); renderSelection(); return; }
-      selectOnly(id); if (obj.locked) return;
-      state.drag = { id, start: pt, startObj: { left: obj.left, top: obj.top } };
-      e.preventDefault(); return;
+      const id = asset.dataset.id;
+      const obj = state.objects[id];
+      if (!obj) return;
+      if (e.shiftKey) {
+        if (state.selected.has(id)) state.selected.delete(id);
+        else state.selected.add(id);
+        renderSelection();
+        return;
+      }
+      selectOnly(id);
+      if (obj.locked) return;
+      state.drag = {
+        id,
+        start: pt,
+        startObj: { left: obj.left, top: obj.top }
+      };
+      e.preventDefault();
+      return;
     }
+    
     selectOnly(null);
     if (e.button === 1 || state.spaceDown) {
-      state.isPanning = true; state.panStart = { x: e.clientX, y: e.clientY, panX: state.panX, panY: state.panY };
-      viewport.style.cursor = 'grabbing'; e.preventDefault();
+      state.isPanning = true;
+      state.panStart = { x: e.clientX, y: e.clientY, panX: state.panX, panY: state.panY };
+      viewport.style.cursor = 'grabbing';
+      e.preventDefault();
     } else {
-      state.selecting = true; const rect = viewport.getBoundingClientRect();
-      state.selectionRect = { x1: e.clientX - rect.left, y1: e.clientY - rect.top, x2: e.clientX - rect.left, y2: e.clientY - rect.top };
-      selectionBox.style.display = 'block'; selectionBox.style.left = `${state.selectionRect.x1}px`; selectionBox.style.top = `${state.selectionRect.y1}px`;
-      selectionBox.style.width = '0px'; selectionBox.style.height = '0px'; e.preventDefault();
+      state.selecting = true;
+      const rect = viewport.getBoundingClientRect();
+      state.selectionRect = {
+        x1: e.clientX - rect.left,
+        y1: e.clientY - rect.top,
+        x2: e.clientX - rect.left,
+        y2: e.clientY - rect.top
+      };
+      selectionBox.style.display = 'block';
+      selectionBox.style.left = `${state.selectionRect.x1}px`;
+      selectionBox.style.top = `${state.selectionRect.y1}px`;
+      selectionBox.style.width = '0px';
+      selectionBox.style.height = '0px';
+      e.preventDefault();
     }
   }
 
   function onPointerMove(e) {
     if (state.role !== 'admin') return;
     const pt = screenToWorld(e.clientX, e.clientY);
+    
     if (state.drag) {
-      const obj = state.objects[state.drag.id]; 
+      const obj = state.objects[state.drag.id];
       if (!obj) return;
       obj.left = Math.round(state.drag.startObj.left + (pt.x - state.drag.start.x));
       obj.top = Math.round(state.drag.startObj.top + (pt.y - state.drag.start.y));
@@ -974,15 +1013,35 @@
         }
         state._updateTimer = null;
       }, 20);
+      
     } else if (state.resize) {
-      const obj = state.objects[state.resize.id]; 
+      const obj = state.objects[state.resize.id];
       if (!obj) return;
-      const dx = pt.x - state.resize.start.x, dy = pt.y - state.resize.start.y;
+      const dx = pt.x - state.resize.start.x;
+      const dy = pt.y - state.resize.start.y;
       const h = state.resize.handle;
-      if (h === 'br') { obj.width = Math.max(24, Math.round(state.resize.startObj.width + dx)); obj.height = Math.max(24, Math.round(state.resize.startObj.height + dy)); }
-      if (h === 'tl') { obj.width = Math.max(24, Math.round(state.resize.startObj.width - dx)); obj.height = Math.max(24, Math.round(state.resize.startObj.height - dy)); obj.left = Math.round(state.resize.startObj.left + dx); obj.top = Math.round(state.resize.startObj.top + dy); }
-      if (h === 'tr') { obj.width = Math.max(24, Math.round(state.resize.startObj.width + dx)); obj.height = Math.max(24, Math.round(state.resize.startObj.height - dy)); obj.top = Math.round(state.resize.startObj.top + dy); }
-      if (h === 'bl') { obj.width = Math.max(24, Math.round(state.resize.startObj.width - dx)); obj.height = Math.max(24, Math.round(state.resize.startObj.height + dy)); obj.left = Math.round(state.resize.startObj.left + dx); }
+      
+      if (h === 'br') {
+        obj.width = Math.max(24, Math.round(state.resize.startObj.width + dx));
+        obj.height = Math.max(24, Math.round(state.resize.startObj.height + dy));
+      }
+      if (h === 'tl') {
+        obj.width = Math.max(24, Math.round(state.resize.startObj.width - dx));
+        obj.height = Math.max(24, Math.round(state.resize.startObj.height - dy));
+        obj.left = Math.round(state.resize.startObj.left + dx);
+        obj.top = Math.round(state.resize.startObj.top + dy);
+      }
+      if (h === 'tr') {
+        obj.width = Math.max(24, Math.round(state.resize.startObj.width + dx));
+        obj.height = Math.max(24, Math.round(state.resize.startObj.height - dy));
+        obj.top = Math.round(state.resize.startObj.top + dy);
+      }
+      if (h === 'bl') {
+        obj.width = Math.max(24, Math.round(state.resize.startObj.width - dx));
+        obj.height = Math.max(24, Math.round(state.resize.startObj.height + dy));
+        obj.left = Math.round(state.resize.startObj.left + dx);
+      }
+      
       const el = assetEl(obj.id);
       if (el) {
         el.style.left = `${obj.left}px`;
@@ -997,8 +1056,9 @@
         }
         state._updateTimer = null;
       }, 20);
+      
     } else if (state.rotate) {
-      const obj = state.objects[state.rotate.id]; 
+      const obj = state.objects[state.rotate.id];
       if (!obj) return;
       const angle = Math.atan2(pt.y - state.rotate.center.y, pt.x - state.rotate.center.x);
       const deg = Math.round((state.rotate.startAngle + ((angle - state.rotate.startMouseAngle) * 180 / Math.PI)) / 5) * 5;
@@ -1014,29 +1074,48 @@
         }
         state._updateTimer = null;
       }, 20);
+      
     } else if (state.isPanning) {
-      state.panX = state.panStart.panX + (e.clientX - state.panStart.x); 
+      state.panX = state.panStart.panX + (e.clientX - state.panStart.x);
       state.panY = state.panStart.panY + (e.clientY - state.panStart.y);
       applyView();
+      
     } else if (state.selecting && state.selectionRect) {
       const rect = viewport.getBoundingClientRect();
-      state.selectionRect.x2 = e.clientX - rect.left; state.selectionRect.y2 = e.clientY - rect.top;
-      const x = Math.min(state.selectionRect.x1, state.selectionRect.x2), y = Math.min(state.selectionRect.y1, state.selectionRect.y2);
-      const w = Math.abs(state.selectionRect.x2 - state.selectionRect.x1), h = Math.abs(state.selectionRect.y2 - state.selectionRect.y1);
-      selectionBox.style.left = `${x}px`; selectionBox.style.top = `${y}px`; selectionBox.style.width = `${w}px`; selectionBox.style.height = `${h}px`;
-      const p1 = screenToWorld(x + rect.left, y + rect.top), p2 = screenToWorld(x + w + rect.left, y + h + rect.top);
-      const box = { x: Math.min(p1.x, p2.x), y: Math.min(p1.y, p2.y), w: Math.abs(p2.x - p1.x), h: Math.abs(p2.y - p1.y) };
+      state.selectionRect.x2 = e.clientX - rect.left;
+      state.selectionRect.y2 = e.clientY - rect.top;
+      const x = Math.min(state.selectionRect.x1, state.selectionRect.x2);
+      const y = Math.min(state.selectionRect.y1, state.selectionRect.y2);
+      const w = Math.abs(state.selectionRect.x2 - state.selectionRect.x1);
+      const h = Math.abs(state.selectionRect.y2 - state.selectionRect.y1);
+      selectionBox.style.left = `${x}px`;
+      selectionBox.style.top = `${y}px`;
+      selectionBox.style.width = `${w}px`;
+      selectionBox.style.height = `${h}px`;
+      
+      const p1 = screenToWorld(x + rect.left, y + rect.top);
+      const p2 = screenToWorld(x + w + rect.left, y + h + rect.top);
+      const box = {
+        x: Math.min(p1.x, p2.x),
+        y: Math.min(p1.y, p2.y),
+        w: Math.abs(p2.x - p1.x),
+        h: Math.abs(p2.y - p1.y)
+      };
       state.selected.clear();
-      Object.values(state.objects).forEach(obj => { if (rectsOverlap({ x: obj.left, y: obj.top, w: obj.width, h: obj.height }, box)) state.selected.add(obj.id); });
+      Object.values(state.objects).forEach(obj => {
+        if (rectsOverlap({ x: obj.left, y: obj.top, w: obj.width, h: obj.height }, box)) {
+          state.selected.add(obj.id);
+        }
+      });
       renderSelection();
     }
   }
 
   function onPointerUp() {
     if (state.role !== 'admin') return;
-    selectionBox.style.display = 'none'; 
-    state.selecting = false; 
-    state.isPanning = false; 
+    selectionBox.style.display = 'none';
+    state.selecting = false;
+    state.isPanning = false;
     state.selectionRect = null;
     viewport.style.cursor = 'default';
     
