@@ -101,7 +101,6 @@
       state.panY = (rect.height - h * scale) / 2;
     }
     applyView();
-    console.log(`📐 Fit view: zoom=${scale.toFixed(2)}`);
   }
 
   function screenToWorld(clientX, clientY) {
@@ -219,6 +218,57 @@
     el.classList.toggle('locked', !!obj.locked);
   }
 
+  // ===== ОТДЕЛЬНАЯ ФУНКЦИЯ ДЛЯ СОЗДАНИЯ IFRAME (без пересоздания) =====
+  function createIframeElement(obj) {
+    const iframe = document.createElement('iframe');
+    iframe.allow = 'autoplay; encrypted-media; fullscreen; clipboard-read; clipboard-write; picture-in-picture';
+    iframe.allowFullscreen = true;
+    iframe.referrerPolicy = 'no-referrer';
+    iframe.style.width = '100%';
+    iframe.style.height = '100%';
+    iframe.style.border = 'none';
+    iframe.style.background = 'transparent';
+    iframe.loading = 'lazy';
+    
+    let url = obj.src || 'about:blank';
+    
+    // YouTube
+    if (url.includes('youtube.com/watch') || url.includes('youtu.be')) {
+      const videoId = url.match(/(?:youtube\.com\/watch\?v=|youtu\.be\/)([^&\?]+)/);
+      if (videoId) {
+        iframe.src = `https://www.youtube.com/embed/${videoId[1]}?autoplay=1&mute=0&enablejsapi=1&rel=0&controls=1&modestbranding=1`;
+      } else {
+        iframe.src = url;
+      }
+    }
+    // Twitch
+    else if (url.includes('twitch.tv')) {
+      const channel = url.match(/twitch\.tv\/([^\/\?]+)/);
+      if (channel) {
+        iframe.src = `https://player.twitch.tv/?channel=${channel[1]}&parent=${location.hostname}&muted=false&autoplay=true`;
+      } else {
+        iframe.src = url;
+      }
+    }
+    // Vimeo
+    else if (url.includes('vimeo.com')) {
+      const videoId = url.match(/vimeo\.com\/(\d+)/);
+      if (videoId) {
+        iframe.src = `https://player.vimeo.com/video/${videoId[1]}?autoplay=1&loop=0`;
+      } else {
+        iframe.src = url;
+      }
+    }
+    // Обычный URL
+    else if (url.startsWith('http')) {
+      iframe.src = url;
+    } else {
+      iframe.src = 'about:blank';
+    }
+    
+    return iframe;
+  }
+
   function renderAssetContent(obj, inner) {
     inner.innerHTML = '';
     const el = inner.parentElement;
@@ -251,47 +301,22 @@
         
       case 'video':
       case 'browser':
-        const iframe = document.createElement('iframe');
-        iframe.src = normalizeUrl(obj.src || 'about:blank');
-        iframe.allow = 'autoplay; encrypted-media; fullscreen; clipboard-read; clipboard-write; picture-in-picture';
-        iframe.allowFullscreen = true;
-        iframe.referrerPolicy = 'no-referrer';
-        iframe.style.width = '100%';
-        iframe.style.height = '100%';
-        iframe.style.border = 'none';
-        iframe.style.background = 'transparent';
-        iframe.loading = 'lazy';
-        // Для YouTube и других стриминговых сервисов
-        if (obj.src) {
-          let url = obj.src;
-          // YouTube
-          if (url.includes('youtube.com/watch') || url.includes('youtu.be')) {
-            const videoId = url.match(/(?:youtube\.com\/watch\?v=|youtu\.be\/)([^&\?]+)/);
-            if (videoId) {
-              iframe.src = `https://www.youtube.com/embed/${videoId[1]}?autoplay=1&mute=0&enablejsapi=1&rel=0`;
-            }
+        // ===== НЕ ПЕРЕСОЗДАЁМ IFRAME, ЕСЛИ УЖЕ ЕСТЬ =====
+        const existingIframe = inner.querySelector('iframe');
+        if (existingIframe) {
+          // Обновляем только src если изменился
+          const newSrc = normalizeUrl(obj.src || 'about:blank');
+          if (existingIframe.src !== newSrc && !existingIframe.src.includes(newSrc)) {
+            existingIframe.src = newSrc;
           }
-          // Twitch
-          else if (url.includes('twitch.tv')) {
-            const channel = url.match(/twitch\.tv\/([^\/\?]+)/);
-            if (channel) {
-              iframe.src = `https://player.twitch.tv/?channel=${channel[1]}&parent=${location.hostname}&muted=false&autoplay=true`;
-            }
-          }
-          // Vimeo
-          else if (url.includes('vimeo.com')) {
-            const videoId = url.match(/vimeo\.com\/(\d+)/);
-            if (videoId) {
-              iframe.src = `https://player.vimeo.com/video/${videoId[1]}?autoplay=1&loop=0`;
-            }
-          }
-          // Обычный URL
-          else if (url.startsWith('http')) {
-            iframe.src = url;
-          }
+          // Восстанавливаем iframe
+          inner.appendChild(existingIframe);
+        } else {
+          // Создаём новый iframe только если его нет
+          const iframe = createIframeElement(obj);
+          if (el) el._iframe = iframe;
+          inner.appendChild(iframe);
         }
-        if (el) el._iframe = iframe;
-        inner.appendChild(iframe);
         break;
         
       case 'qr':
@@ -335,9 +360,22 @@
       el = document.createElement('div');
       el.className = 'asset';
       el.dataset.id = obj.id;
-      el.innerHTML = `<div class="asset-inner"></div><div class="name-tag"></div><div class="handle rot" data-handle="rot"></div><div class="handle tl" data-handle="tl"></div><div class="handle tr" data-handle="tr"></div><div class="handle bl" data-handle="bl"></div><div class="handle br" data-handle="br"></div>`;
+      // Блокируем клики по ссылкам внутри объекта
+      el.style.pointerEvents = 'none';
+      el.innerHTML = `<div class="asset-inner" style="pointer-events:none;"></div><div class="name-tag"></div><div class="handle rot" data-handle="rot"></div><div class="handle tl" data-handle="tl"></div><div class="handle tr" data-handle="tr"></div><div class="handle bl" data-handle="bl"></div><div class="handle br" data-handle="br"></div>`;
       world.appendChild(el);
-      if (state.role === 'admin') el.addEventListener('pointerdown', onPointerDown);
+      if (state.role === 'admin') {
+        // Для админа включаем pointer-events на самом контейнере, но не на содержимом
+        el.style.pointerEvents = 'auto';
+        el.addEventListener('pointerdown', onPointerDown);
+        // Блокируем все клики внутри, чтобы не открывались ссылки
+        el.addEventListener('click', (e) => {
+          if (!e.target.closest('.handle')) {
+            e.preventDefault();
+            e.stopPropagation();
+          }
+        });
+      }
     }
     applyAssetStyle(el, obj);
     const inner = el.querySelector('.asset-inner');
@@ -459,12 +497,31 @@
   function setObject(id, patch, emit = false) {
     const obj = state.objects[id];
     if (!obj) return null;
+    
+    // Проверяем, изменился ли src (если нет - не пересоздаём iframe)
+    const srcChanged = patch.src !== undefined && patch.src !== obj.src;
+    
     Object.assign(obj, patch);
     const el = assetEl(id);
     if (el) {
       applyAssetStyle(el, obj);
       const inner = el.querySelector('.asset-inner');
-      if (inner) renderAssetContent(obj, inner);
+      if (inner) {
+        // Если изменился только текст/цвет/шрифт - обновляем содержимое
+        if (patch.text !== undefined || patch.color !== undefined || patch.fontSize !== undefined || patch.fontWeight !== undefined) {
+          renderAssetContent(obj, inner);
+        }
+        // Если изменился src для браузера/видео - обновляем iframe
+        if (srcChanged && ['browser','video'].includes(obj.type)) {
+          const iframe = inner.querySelector('iframe');
+          if (iframe) {
+            const newSrc = normalizeUrl(obj.src || 'about:blank');
+            if (iframe.src !== newSrc && !iframe.src.includes(newSrc)) {
+              iframe.src = newSrc;
+            }
+          }
+        }
+      }
     }
     renderInspector();
     if (emit && state.role === 'admin') {
@@ -599,7 +656,6 @@
 
   function renderObject(obj) {
     if (!obj || !obj.visible) return;
-    // В OBS показываем ТОЛЬКО объекты в live зоне (top < resolution.h)
     if (state.role === 'obs' && obj.top >= state.resolution.h) return;
     buildAssetElement(obj);
   }
@@ -613,7 +669,6 @@
         el.remove();
         return;
       }
-      // В OBS удаляем объекты вне live зоны
       if (state.role === 'obs' && obj.top >= state.resolution.h) {
         el.remove();
         return;
@@ -771,6 +826,10 @@
 
   function onPointerDown(e) {
     if (state.role !== 'admin') return;
+    // Игнорируем клики по содержимому iframe
+    if (e.target.closest('iframe') || e.target.closest('video') || e.target.closest('audio')) {
+      return;
+    }
     const handle = e.target.closest('.handle');
     const asset = e.target.closest('.asset');
     const pt = screenToWorld(e.clientX, e.clientY);
@@ -817,7 +876,6 @@
         el.style.left = `${obj.left}px`;
         el.style.top = `${obj.top}px`;
       }
-      // Мгновенная отправка на сервер
       if (state._updateTimer) clearTimeout(state._updateTimer);
       state._updateTimer = setTimeout(() => {
         if (state.drag) {
