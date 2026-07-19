@@ -56,10 +56,6 @@
           <button class="btn sm purple" id="addImageUrlBtn">Image by link</button>
         </div>
         <input id="imageFileInput" type="file" accept="image/*" hidden>
-        <div style="margin-top:8px;">
-          <button class="btn sm purple" id="addSoundFileBtn">🎵 Upload MP3</button>
-          <input id="soundFileInput" type="file" accept="audio/*" hidden>
-        </div>
       </div>
 
       <div class="section" id="moderatorsSection" style="display: none;">
@@ -214,15 +210,20 @@
               <button class="btn" id="timerMinus10Btn">-10s</button>
             </div>
           </div>
-          <div class="audio-panel hidden" id="audioPanel" style="margin-top:12px;border:1px solid rgba(57,255,20,.25);border-radius:14px;padding:10px;background:rgba(57,255,20,.05);">
-            <h4 style="margin:0 0 8px;color:#39ff14;text-transform:uppercase;font-size:12px;letter-spacing:.1em;">🎵 Audio Controls</h4>
-            <div style="display:flex;gap:8px;align-items:center;">
-              <button class="btn sm green" id="audioPlayBtn">▶ Play</button>
-              <label style="font-size:11px;color:var(--muted);display:flex;align-items:center;gap:6px;">
-                <input type="checkbox" id="audioMute"> Mute
-              </label>
-              <input type="range" id="audioVolume" min="0" max="1" step="0.05" value="1" style="flex:1;">
-              <span id="audioVolumeLabel" style="color:var(--muted);font-size:11px;min-width:30px;">100%</span>
+          <div class="stopwatch-panel hidden" id="stopwatchPanel" style="margin-top:12px;border:1px solid rgba(57,255,20,.25);border-radius:14px;padding:10px;background:rgba(57,255,20,.05);">
+            <h4 style="margin:0 0 8px;color:#39ff14;text-transform:uppercase;font-size:12px;letter-spacing:.1em;">⏱️ Stopwatch</h4>
+            <div style="display:flex;justify-content:space-between;gap:8px;margin-bottom:6px;">
+              <span style="color:var(--muted);font-size:11px;">Status</span>
+              <span id="stopwatchStatusText" style="font-weight:800;color:#39ff14;">Stopped</span>
+            </div>
+            <div style="display:flex;justify-content:space-between;gap:8px;margin-bottom:10px;">
+              <span style="color:var(--muted);font-size:11px;">Time</span>
+              <span id="stopwatchTimeText" style="font-weight:800;font-family:monospace;font-size:18px;color:#39ff14;">00:00:00.0</span>
+            </div>
+            <div class="timer-btns" style="grid-template-columns:repeat(3,1fr);">
+              <button class="btn green" id="stopwatchStartBtn">▶ Start</button>
+              <button class="btn" id="stopwatchPauseBtn">⏸ Pause</button>
+              <button class="btn red" id="stopwatchResetBtn">⟳ Reset</button>
             </div>
           </div>
           <div class="inspector-actions" style="margin-top:12px">
