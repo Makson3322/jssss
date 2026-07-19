@@ -30,10 +30,7 @@
     selecting: false, selectionRect: null, spaceDown: false, lockView: false,
     spawnBusy: false, netCounter: 0, _netTimer: null,
     _updateTimer: null,
-    _lastUpdate: 0,
-    _pendingUpdates: {},
-    _editingText: null,
-    _editingUrl: null
+    _lastUpdate: 0
   };
 
   let currentUsername = null;
@@ -48,9 +45,7 @@
   const zoomPill = $('#zoomPill');
 
   function setRoomTexts() {
-    if (roomPill) {
-      roomPill.textContent = `room: ${room}`;
-    }
+    if (roomPill) roomPill.textContent = `room: ${room}`;
     const obsLink = `${location.origin}/obs.html?room=${encodeURIComponent(room)}`;
     const obsText = $('#obsLinkText');
     if (obsText) obsText.textContent = obsLink;
@@ -106,6 +101,7 @@
       state.panY = (rect.height - h * scale) / 2;
     }
     applyView();
+    console.log(`📐 Fit view: zoom=${scale.toFixed(2)}`);
   }
 
   function screenToWorld(clientX, clientY) {
@@ -265,11 +261,34 @@
         iframe.style.border = 'none';
         iframe.style.background = 'transparent';
         iframe.loading = 'lazy';
-        if (obj.src && (obj.src.includes('youtube.com') || obj.src.includes('youtu.be'))) {
-          iframe.src = iframe.src.includes('?') ? iframe.src + '&autoplay=1&mute=1&enablejsapi=1' : iframe.src + '?autoplay=1&mute=1&enablejsapi=1';
-        }
-        if (obj.src && obj.src.includes('twitch.tv')) {
-          iframe.src = iframe.src.includes('?') ? iframe.src + '&autoplay=true&muted=true' : iframe.src + '?autoplay=true&muted=true';
+        // Для YouTube и других стриминговых сервисов
+        if (obj.src) {
+          let url = obj.src;
+          // YouTube
+          if (url.includes('youtube.com/watch') || url.includes('youtu.be')) {
+            const videoId = url.match(/(?:youtube\.com\/watch\?v=|youtu\.be\/)([^&\?]+)/);
+            if (videoId) {
+              iframe.src = `https://www.youtube.com/embed/${videoId[1]}?autoplay=1&mute=0&enablejsapi=1&rel=0`;
+            }
+          }
+          // Twitch
+          else if (url.includes('twitch.tv')) {
+            const channel = url.match(/twitch\.tv\/([^\/\?]+)/);
+            if (channel) {
+              iframe.src = `https://player.twitch.tv/?channel=${channel[1]}&parent=${location.hostname}&muted=false&autoplay=true`;
+            }
+          }
+          // Vimeo
+          else if (url.includes('vimeo.com')) {
+            const videoId = url.match(/vimeo\.com\/(\d+)/);
+            if (videoId) {
+              iframe.src = `https://player.vimeo.com/video/${videoId[1]}?autoplay=1&loop=0`;
+            }
+          }
+          // Обычный URL
+          else if (url.startsWith('http')) {
+            iframe.src = url;
+          }
         }
         if (el) el._iframe = iframe;
         inner.appendChild(iframe);
@@ -437,20 +456,6 @@
     return obj;
   }
 
-  function updateObjectLocally(id, patch) {
-    const obj = state.objects[id];
-    if (!obj) return;
-    Object.assign(obj, patch);
-    const el = assetEl(id);
-    if (el) {
-      applyAssetStyle(el, obj);
-      if (patch.text !== undefined || patch.color !== undefined || patch.fontSize !== undefined || patch.fontWeight !== undefined) {
-        const inner = el.querySelector('.asset-inner');
-        if (inner) renderAssetContent(obj, inner);
-      }
-    }
-  }
-
   function setObject(id, patch, emit = false) {
     const obj = state.objects[id];
     if (!obj) return null;
@@ -526,7 +531,7 @@
       common.volume = 1;
       common.muted = false;
     } else if (type === 'sound') {
-      common.src = opts.src || prompt('Audio URL (MP3/WAV):', 'https://example.com/song.mp3') || '';
+      common.src = opts.src || prompt('Audio URL (MP3/WAV):', '') || '';
       common.width = opts.width || 400; common.height = opts.height || 80;
       common.bg = 'rgba(0,0,0,.3)';
       common.volume = 1;
@@ -594,7 +599,7 @@
 
   function renderObject(obj) {
     if (!obj || !obj.visible) return;
-    // В OBS показываем только объекты в live зоне (top < resolution.h)
+    // В OBS показываем ТОЛЬКО объекты в live зоне (top < resolution.h)
     if (state.role === 'obs' && obj.top >= state.resolution.h) return;
     buildAssetElement(obj);
   }
@@ -604,7 +609,15 @@
     world.querySelectorAll('.asset').forEach(el => { 
       const id = el.dataset.id; 
       const obj = state.objects[id]; 
-      if (!obj || !obj.visible || (state.role === 'obs' && obj.top >= state.resolution.h)) el.remove(); 
+      if (!obj || !obj.visible) {
+        el.remove();
+        return;
+      }
+      // В OBS удаляем объекты вне live зоны
+      if (state.role === 'obs' && obj.top >= state.resolution.h) {
+        el.remove();
+        return;
+      }
     });
     Object.values(state.objects).forEach(obj => renderObject(obj));
     renderSelection(); renderLists(); applyView(); updateDynamicTimers();
@@ -804,7 +817,7 @@
         el.style.left = `${obj.left}px`;
         el.style.top = `${obj.top}px`;
       }
-      // Мгновенная отправка на сервер для синхронизации
+      // Мгновенная отправка на сервер
       if (state._updateTimer) clearTimeout(state._updateTimer);
       state._updateTimer = setTimeout(() => {
         if (state.drag) {
@@ -931,7 +944,7 @@
     
     const selected = [...state.selected];
     
-    if ((e.key === 'Backspace') && !isInputFocused) {
+    if ((e.key === 'Delete' || e.key === 'Backspace') && !isInputFocused) {
       e.preventDefault();
       selected.forEach(id => removeObject(id));
       return;
@@ -1039,7 +1052,6 @@
       navigator.clipboard?.writeText(txt); 
     });
     
-    // ===== ОБРАБОТЧИК ВЫБОРА РАЗРЕШЕНИЯ =====
     $('#resolutionSelect')?.addEventListener('change', () => { 
       const [w, h] = $('#resolutionSelect').value.split('x').map(Number); 
       socket.emit('set_resolution', { w, h }, (res) => {
