@@ -218,54 +218,75 @@
     el.classList.toggle('locked', !!obj.locked);
   }
 
-  // ===== ОТДЕЛЬНАЯ ФУНКЦИЯ ДЛЯ СОЗДАНИЯ IFRAME (без пересоздания) =====
+  // ===== ИСПРАВЛЕННАЯ ФУНКЦИЯ ДЛЯ YOUTUBE =====
   function createIframeElement(obj) {
     const iframe = document.createElement('iframe');
-    iframe.allow = 'autoplay; encrypted-media; fullscreen; clipboard-read; clipboard-write; picture-in-picture';
+    iframe.allow = 'autoplay; encrypted-media; fullscreen; clipboard-read; clipboard-write; picture-in-picture; web-share';
     iframe.allowFullscreen = true;
-    iframe.referrerPolicy = 'no-referrer';
+    iframe.referrerPolicy = 'no-referrer-when-downgrade';
     iframe.style.width = '100%';
     iframe.style.height = '100%';
     iframe.style.border = 'none';
     iframe.style.background = 'transparent';
     iframe.loading = 'lazy';
+    iframe.sandbox = 'allow-scripts allow-same-origin allow-forms allow-popups allow-presentation';
     
     let url = obj.src || 'about:blank';
+    let embedUrl = url;
     
-    // YouTube
-    if (url.includes('youtube.com/watch') || url.includes('youtu.be')) {
-      const videoId = url.match(/(?:youtube\.com\/watch\?v=|youtu\.be\/)([^&\?]+)/);
+    // YouTube - правильный embed с параметрами
+    if (url.includes('youtube.com/watch') || url.includes('youtu.be') || url.includes('youtube.com/embed')) {
+      let videoId = null;
+      
+      // Извлекаем ID видео
+      const patterns = [
+        /youtube\.com\/watch\?v=([^&\?]+)/,
+        /youtu\.be\/([^&\?]+)/,
+        /youtube\.com\/embed\/([^&\?]+)/
+      ];
+      
+      for (const pattern of patterns) {
+        const match = url.match(pattern);
+        if (match) {
+          videoId = match[1];
+          break;
+        }
+      }
+      
       if (videoId) {
-        iframe.src = `https://www.youtube.com/embed/${videoId[1]}?autoplay=1&mute=0&enablejsapi=1&rel=0&controls=1&modestbranding=1`;
+        // Используем youtube-nocookie.com для лучшей совместимости
+        embedUrl = `https://www.youtube-nocookie.com/embed/${videoId}?autoplay=1&mute=0&enablejsapi=1&rel=0&controls=1&modestbranding=1&showinfo=0&origin=${encodeURIComponent(location.origin)}`;
       } else {
-        iframe.src = url;
+        embedUrl = url;
       }
     }
     // Twitch
     else if (url.includes('twitch.tv')) {
       const channel = url.match(/twitch\.tv\/([^\/\?]+)/);
       if (channel) {
-        iframe.src = `https://player.twitch.tv/?channel=${channel[1]}&parent=${location.hostname}&muted=false&autoplay=true`;
+        embedUrl = `https://player.twitch.tv/?channel=${channel[1]}&parent=${location.hostname}&muted=false&autoplay=true`;
       } else {
-        iframe.src = url;
+        embedUrl = url;
       }
     }
     // Vimeo
     else if (url.includes('vimeo.com')) {
       const videoId = url.match(/vimeo\.com\/(\d+)/);
       if (videoId) {
-        iframe.src = `https://player.vimeo.com/video/${videoId[1]}?autoplay=1&loop=0`;
+        embedUrl = `https://player.vimeo.com/video/${videoId[1]}?autoplay=1&loop=0&title=0&byline=0&portrait=0`;
       } else {
-        iframe.src = url;
+        embedUrl = url;
       }
     }
     // Обычный URL
     else if (url.startsWith('http')) {
-      iframe.src = url;
+      embedUrl = url;
     } else {
-      iframe.src = 'about:blank';
+      embedUrl = 'about:blank';
     }
     
+    iframe.src = embedUrl;
+    console.log('🎬 iframe создан:', embedUrl);
     return iframe;
   }
 
@@ -301,21 +322,36 @@
         
       case 'video':
       case 'browser':
-        // ===== НЕ ПЕРЕСОЗДАЁМ IFRAME, ЕСЛИ УЖЕ ЕСТЬ =====
-        const existingIframe = inner.querySelector('iframe');
-        if (existingIframe) {
-          // Обновляем только src если изменился
-          const newSrc = normalizeUrl(obj.src || 'about:blank');
-          if (existingIframe.src !== newSrc && !existingIframe.src.includes(newSrc)) {
-            existingIframe.src = newSrc;
+        // Проверяем, есть ли уже iframe
+        let iframe = inner.querySelector('iframe');
+        if (iframe) {
+          // Обновляем src если изменился
+          const newUrl = obj.src || 'about:blank';
+          const currentSrc = iframe.src;
+          // Проверяем, изменился ли видео ID
+          let needUpdate = false;
+          if (newUrl.includes('youtube.com') || newUrl.includes('youtu.be')) {
+            const oldId = currentSrc.match(/embed\/([^\?\&]+)/);
+            const newId = newUrl.match(/(?:v=|youtu\.be\/|embed\/)([^&\?]+)/);
+            if (oldId && newId && oldId[1] !== newId[1]) {
+              needUpdate = true;
+            } else if (!oldId && newId) {
+              needUpdate = true;
+            }
+          } else if (currentSrc !== newUrl && !currentSrc.includes(newUrl)) {
+            needUpdate = true;
           }
-          // Восстанавливаем iframe
-          inner.appendChild(existingIframe);
+          
+          if (needUpdate) {
+            const newIframe = createIframeElement(obj);
+            inner.replaceChild(newIframe, iframe);
+            if (el) el._iframe = newIframe;
+          }
         } else {
-          // Создаём новый iframe только если его нет
-          const iframe = createIframeElement(obj);
-          if (el) el._iframe = iframe;
-          inner.appendChild(iframe);
+          // Создаём новый iframe
+          const newIframe = createIframeElement(obj);
+          if (el) el._iframe = newIframe;
+          inner.appendChild(newIframe);
         }
         break;
         
@@ -360,17 +396,14 @@
       el = document.createElement('div');
       el.className = 'asset';
       el.dataset.id = obj.id;
-      // Блокируем клики по ссылкам внутри объекта
       el.style.pointerEvents = 'none';
       el.innerHTML = `<div class="asset-inner" style="pointer-events:none;"></div><div class="name-tag"></div><div class="handle rot" data-handle="rot"></div><div class="handle tl" data-handle="tl"></div><div class="handle tr" data-handle="tr"></div><div class="handle bl" data-handle="bl"></div><div class="handle br" data-handle="br"></div>`;
       world.appendChild(el);
       if (state.role === 'admin') {
-        // Для админа включаем pointer-events на самом контейнере, но не на содержимом
         el.style.pointerEvents = 'auto';
         el.addEventListener('pointerdown', onPointerDown);
-        // Блокируем все клики внутри, чтобы не открывались ссылки
         el.addEventListener('click', (e) => {
-          if (!e.target.closest('.handle')) {
+          if (!e.target.closest('.handle') && !e.target.closest('iframe')) {
             e.preventDefault();
             e.stopPropagation();
           }
@@ -498,7 +531,6 @@
     const obj = state.objects[id];
     if (!obj) return null;
     
-    // Проверяем, изменился ли src (если нет - не пересоздаём iframe)
     const srcChanged = patch.src !== undefined && patch.src !== obj.src;
     
     Object.assign(obj, patch);
@@ -507,19 +539,11 @@
       applyAssetStyle(el, obj);
       const inner = el.querySelector('.asset-inner');
       if (inner) {
-        // Если изменился только текст/цвет/шрифт - обновляем содержимое
         if (patch.text !== undefined || patch.color !== undefined || patch.fontSize !== undefined || patch.fontWeight !== undefined) {
           renderAssetContent(obj, inner);
         }
-        // Если изменился src для браузера/видео - обновляем iframe
         if (srcChanged && ['browser','video'].includes(obj.type)) {
-          const iframe = inner.querySelector('iframe');
-          if (iframe) {
-            const newSrc = normalizeUrl(obj.src || 'about:blank');
-            if (iframe.src !== newSrc && !iframe.src.includes(newSrc)) {
-              iframe.src = newSrc;
-            }
-          }
+          renderAssetContent(obj, inner);
         }
       }
     }
@@ -826,7 +850,7 @@
 
   function onPointerDown(e) {
     if (state.role !== 'admin') return;
-    // Игнорируем клики по содержимому iframe
+    // Игнорируем клики внутри iframe
     if (e.target.closest('iframe') || e.target.closest('video') || e.target.closest('audio')) {
       return;
     }
