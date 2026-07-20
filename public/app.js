@@ -184,7 +184,6 @@
     return 'data:image/svg+xml;charset=utf-8,' + encodeURIComponent(svg);
   }
 
-  // ===== ИСПРАВЛЕННАЯ ФУНКЦИЯ QR =====
   function qrNode(text) {
     const container = document.createElement('div');
     container.style.width = '100%';
@@ -202,7 +201,6 @@
       return container;
     }
     
-    // Пробуем использовать QRCodeStyling
     if (window.QRCodeStyling) {
       try {
         const qrContainer = document.createElement('div');
@@ -242,11 +240,9 @@
         return container;
       } catch(e) {
         console.warn('QRCodeStyling error:', e);
-        // Падаем через API
       }
     }
     
-    // Fallback: используем API
     try {
       const img = document.createElement('img');
       img.style.width = '80%';
@@ -255,12 +251,10 @@
       img.style.background = '#ffffff';
       img.style.padding = '10px';
       img.style.borderRadius = '4px';
-      // Используем API для генерации QR
       img.src = `https://api.qrserver.com/v1/create-qr-code/?size=300x300&data=${encodeURIComponent(qrText)}&bgcolor=ffffff&color=000000&margin=10`;
       img.alt = 'QR Code';
       img.crossOrigin = 'anonymous';
       img.onerror = () => {
-        // Если API не работает, показываем текст
         container.innerHTML = '';
         container.textContent = qrText;
         container.style.fontSize = '14px';
@@ -413,7 +407,6 @@
       case 'image': {
         const img = document.createElement('img');
         img.className = 'asset-content-image';
-        // Используем src напрямую, normalizeUrl уже обработал
         img.src = obj.src || createPlaceholderDataUrl('IMAGE');
         img.alt = obj.name || 'image';
         img.draggable = false;
@@ -423,7 +416,6 @@
         img.style.height = '100%';
         img.style.objectFit = 'contain';
         img.onerror = function() {
-          // Если изображение не загрузилось, показываем placeholder
           this.src = createPlaceholderDataUrl('IMAGE');
         };
         inner.appendChild(img);
@@ -445,7 +437,6 @@
       }
         
       case 'qr': {
-        // QR-код создаётся через qrNode
         const qrContainer = qrNode(obj.qrText || obj.text || obj.src || '');
         qrContainer.className = 'asset-content-qr';
         inner.appendChild(qrContainer);
@@ -481,10 +472,8 @@
   }
 
   function updateAssetContent(obj, inner) {
-    // Сначала проверяем, есть ли у нас QR-контейнер, который нужно обновить
     const qrContainer = inner.querySelector('.asset-content-qr');
     if (qrContainer && obj.type === 'qr') {
-      // Пересоздаём QR
       const newQr = qrNode(obj.qrText || obj.text || obj.src || '');
       newQr.className = 'asset-content-qr';
       inner.replaceChild(newQr, qrContainer);
@@ -759,11 +748,16 @@
       common.width = opts.width || 420; common.height = opts.height || 240;
       common.bg = opts.bg || 'rgba(123,44,191,.85)'; common.borderColor = opts.borderColor || '#39ff14';
     } else if (type === 'image') {
-      const imgUrl = prompt('Image URL:', 'https://example.com/image.jpg');
-      if (imgUrl) {
-        common.src = normalizeUrl(imgUrl);
+      // Проверяем, есть ли уже src (для загруженных файлов)
+      if (opts.src) {
+        common.src = opts.src;
       } else {
-        common.src = createPlaceholderDataUrl('IMAGE');
+        const imgUrl = prompt('Image URL:', 'https://example.com/image.jpg');
+        if (imgUrl) {
+          common.src = normalizeUrl(imgUrl);
+        } else {
+          common.src = createPlaceholderDataUrl('IMAGE');
+        }
       }
       common.width = opts.width || 520; common.height = opts.height || 300;
     } else if (type === 'video' || type === 'browser') {
@@ -888,16 +882,30 @@
     });
   }
 
+  // ===== ИСПРАВЛЕННАЯ ФУНКЦИЯ ДЛЯ ЗАГРУЗКИ ФОТО =====
   function addImageFile(file) { 
     if (!file) return; 
+    console.log('📁 Загружаем файл:', file.name, file.type, file.size);
+    
     const reader = new FileReader(); 
     reader.onload = function(e) {
-      createObjectByType('image', { src: e.target.result });
+      try {
+        const dataUrl = e.target.result;
+        console.log('✅ Файл загружен, длина:', dataUrl.length);
+        // Создаём объект с data URL
+        createObjectByType('image', { src: dataUrl, name: file.name });
+      } catch(err) {
+        console.error('❌ Ошибка при создании объекта:', err);
+        alert('Ошибка при загрузке файла: ' + err.message);
+      }
     }; 
+    reader.onerror = function(err) {
+      console.error('❌ Ошибка чтения файла:', err);
+      alert('Ошибка чтения файла');
+    };
     reader.readAsDataURL(file); 
   }
 
-  // ===== ИСПРАВЛЕННАЯ addImageUrl =====
   function addImageUrl() { 
     const url = prompt('Image URL:', 'https://example.com/image.jpg'); 
     if (url) {
@@ -1450,9 +1458,13 @@
     $('#dupBtn')?.addEventListener('click', duplicateSelected);
     $('#toLiveBtn')?.addEventListener('click', () => moveSelectedByScene(-state.resolution.h));
     $('#toStageBtn')?.addEventListener('click', () => moveSelectedByScene(state.resolution.h));
-    $('#addImageFileBtn')?.addEventListener('click', () => $('#imageFileInput')?.click());
+    $('#addImageFileBtn')?.addEventListener('click', () => {
+      console.log('🖱️ Клик по кнопке Upload photo');
+      $('#imageFileInput')?.click();
+    });
     $('#imageFileInput')?.addEventListener('change', (e) => { 
       const file = e.target.files?.[0]; 
+      console.log('📁 Выбран файл:', file?.name);
       if(file) addImageFile(file); 
       e.target.value = ''; 
     });
