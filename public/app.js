@@ -29,8 +29,9 @@
     isPanning: false, panStart: null, drag: null, rotate: null, resize: null,
     selecting: false, selectionRect: null, spaceDown: false, lockView: false,
     spawnBusy: false, netCounter: 0, _netTimer: null,
-    _updateTimer: null,
-    _iframeCache: {}
+    _iframeCache: {},
+    _lastUpdate: 0,
+    _isLocalUpdate: false
   };
 
   let currentUsername = null;
@@ -76,7 +77,6 @@
     }, 1000);
   }
 
-  // ===== ИСПРАВЛЕННАЯ ФУНКЦИЯ applyView =====
   function applyView() {
     document.documentElement.style.setProperty('--worldW', `${state.resolution.w}px`);
     document.documentElement.style.setProperty('--worldH', `${currentWorldHeight()}px`);
@@ -572,11 +572,14 @@
     state.selected.clear(); state.selected.add(obj.id);
     renderSelection();
     if (emit && state.role === 'admin') {
+      state._isLocalUpdate = true;
       socket.emit('add_element', obj);
+      setTimeout(() => { state._isLocalUpdate = false; }, 100);
     }
     return obj;
   }
 
+  // ===== ИСПРАВЛЕННАЯ ФУНКЦИЯ setObject - БЕЗ ЗАДЕРЖКИ =====
   function setObject(id, patch, emit = false) {
     const obj = state.objects[id];
     if (!obj) return null;
@@ -592,7 +595,10 @@
     }
     renderInspector();
     if (emit && state.role === 'admin') {
+      state._isLocalUpdate = true;
       socket.emit('update_element', obj);
+      // Не сбрасываем флаг сразу, чтобы серверный ответ не перезаписал
+      setTimeout(() => { state._isLocalUpdate = false; }, 100);
     }
     return obj;
   }
@@ -603,7 +609,11 @@
     delete state._iframeCache[id];
     state.selected.delete(id);
     renderSelection();
-    if (emit && state.role === 'admin') socket.emit('remove_element', { id });
+    if (emit && state.role === 'admin') {
+      state._isLocalUpdate = true;
+      socket.emit('remove_element', { id });
+      setTimeout(() => { state._isLocalUpdate = false; }, 100);
+    }
   }
 
   const spawnDefs = [
@@ -721,15 +731,12 @@
     renderSelection();
   }
 
-  // ===== ИСПРАВЛЕННАЯ ФУНКЦИЯ renderObject =====
   function renderObject(obj) {
     if (!obj || !obj.visible) return;
-    // В OBS показываем ТОЛЬКО объекты в live зоне (top < resolution.h)
     if (state.role === 'obs' && obj.top >= state.resolution.h) return;
     buildAssetElement(obj);
   }
 
-  // ===== ИСПРАВЛЕННАЯ ФУНКЦИЯ renderAll =====
   function renderAll() {
     if (!world) return;
     world.querySelectorAll('.asset').forEach(el => { 
@@ -740,7 +747,6 @@
         delete state._iframeCache[id];
         return;
       }
-      // В OBS удаляем объекты вне live зоны
       if (state.role === 'obs' && obj.top >= state.resolution.h) {
         el.remove();
         delete state._iframeCache[id];
@@ -1002,6 +1008,7 @@
     }
   }
 
+  // ===== ИСПРАВЛЕННАЯ ФУНКЦИЯ onPointerMove =====
   function onPointerMove(e) {
     if (state.role !== 'admin') return;
     const pt = screenToWorld(e.clientX, e.clientY);
@@ -1009,20 +1016,23 @@
     if (state.drag) {
       const obj = state.objects[state.drag.id];
       if (!obj) return;
+      
+      // Обновляем позицию мгновенно
       obj.left = Math.round(state.drag.startObj.left + (pt.x - state.drag.start.x));
       obj.top = Math.round(state.drag.startObj.top + (pt.y - state.drag.start.y));
+      
       const el = assetEl(obj.id);
       if (el) {
         el.style.left = `${obj.left}px`;
         el.style.top = `${obj.top}px`;
       }
-      if (state._updateTimer) clearTimeout(state._updateTimer);
-      state._updateTimer = setTimeout(() => {
-        if (state.drag) {
-          socket.emit('update_element', obj);
-        }
-        state._updateTimer = null;
-      }, 20);
+      
+      // Отправляем на сервер без задержки
+      if (state.role === 'admin') {
+        state._isLocalUpdate = true;
+        socket.emit('update_element', obj);
+        setTimeout(() => { state._isLocalUpdate = false; }, 50);
+      }
       
     } else if (state.resize) {
       const obj = state.objects[state.resize.id];
@@ -1059,13 +1069,12 @@
         el.style.width = `${obj.width}px`;
         el.style.height = `${obj.height}px`;
       }
-      if (state._updateTimer) clearTimeout(state._updateTimer);
-      state._updateTimer = setTimeout(() => {
-        if (state.resize) {
-          socket.emit('update_element', obj);
-        }
-        state._updateTimer = null;
-      }, 20);
+      
+      if (state.role === 'admin') {
+        state._isLocalUpdate = true;
+        socket.emit('update_element', obj);
+        setTimeout(() => { state._isLocalUpdate = false; }, 50);
+      }
       
     } else if (state.rotate) {
       const obj = state.objects[state.rotate.id];
@@ -1077,13 +1086,12 @@
       if (el) {
         el.style.transform = `rotate(${obj.angle}deg) scale(${obj.scaleX || 1}, ${obj.scaleY || 1})`;
       }
-      if (state._updateTimer) clearTimeout(state._updateTimer);
-      state._updateTimer = setTimeout(() => {
-        if (state.rotate) {
-          socket.emit('update_element', obj);
-        }
-        state._updateTimer = null;
-      }, 20);
+      
+      if (state.role === 'admin') {
+        state._isLocalUpdate = true;
+        socket.emit('update_element', obj);
+        setTimeout(() => { state._isLocalUpdate = false; }, 50);
+      }
       
     } else if (state.isPanning) {
       state.panX = state.panStart.panX + (e.clientX - state.panStart.x);
@@ -1132,28 +1140,31 @@
     if (state.drag) {
       const obj = state.objects[state.drag.id];
       if (obj) {
-        clearTimeout(state._updateTimer);
+        // Финальная отправка на сервер
+        state._isLocalUpdate = true;
         socket.emit('update_element', obj);
+        setTimeout(() => { state._isLocalUpdate = false; }, 50);
       }
       state.drag = null;
     }
     if (state.resize) {
       const obj = state.objects[state.resize.id];
       if (obj) {
-        clearTimeout(state._updateTimer);
+        state._isLocalUpdate = true;
         socket.emit('update_element', obj);
+        setTimeout(() => { state._isLocalUpdate = false; }, 50);
       }
       state.resize = null;
     }
     if (state.rotate) {
       const obj = state.objects[state.rotate.id];
       if (obj) {
-        clearTimeout(state._updateTimer);
+        state._isLocalUpdate = true;
         socket.emit('update_element', obj);
+        setTimeout(() => { state._isLocalUpdate = false; }, 50);
       }
       state.rotate = null;
     }
-    state._updateTimer = null;
   }
 
   function onWheel(e) {
@@ -1208,9 +1219,17 @@
   function syncRoomState(roomState) {
     state.meta = roomState.meta || state.meta;
     state.resolution = state.meta.resolution || state.resolution;
-    state.objects = {};
-    state._iframeCache = {};
-    if (roomState.objects) Object.values(roomState.objects).forEach(obj => { state.objects[obj.id] = normalizeObject(obj); });
+    
+    // Обновляем объекты, но не перезаписываем локальные изменения
+    if (roomState.objects) {
+      Object.values(roomState.objects).forEach(obj => {
+        // Если объект уже есть и это наше локальное обновление - не перезаписываем
+        if (state.objects[obj.id] && state._isLocalUpdate) {
+          return;
+        }
+        state.objects[obj.id] = normalizeObject(obj);
+      });
+    }
     renderAll();
   }
 
@@ -1466,6 +1485,7 @@
   });
 
   socket.on('element_added', (obj) => { 
+    if (state._isLocalUpdate) return;
     state.objects[obj.id] = normalizeObject(obj); 
     buildAssetElement(state.objects[obj.id]); 
     renderAll(); 
@@ -1473,6 +1493,7 @@
   });
 
   socket.on('element_updated', (obj) => {
+    if (state._isLocalUpdate) return;
     state.objects[obj.id] = normalizeObject({ ...(state.objects[obj.id] || {}), ...obj });
     const el = assetEl(obj.id);
     if(el) { 
@@ -1487,6 +1508,7 @@
   });
 
   socket.on('element_removed', ({ id }) => { 
+    if (state._isLocalUpdate) return;
     removeObject(id, false); 
     renderAll(); 
   });
