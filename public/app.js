@@ -52,14 +52,21 @@
     if (obsText) obsText.textContent = obsLink;
   }
 
+  // ===== ИСПРАВЛЕННАЯ normalizeUrl =====
   function normalizeUrl(input) {
     let url = String(input || '').trim();
     if (!url) return '';
+    // Пропускаем data: URL (уже закодированы)
+    if (/^data:/.test(url)) return url;
     if (/^(javascript|vbscript):/i.test(url)) return 'about:blank';
-    if (/^(data|blob):/i.test(url)) return url;
+    if (/^(blob):/i.test(url)) return url;
     if (/^about:blank$/i.test(url)) return 'about:blank';
     if (/^https?:\/\//i.test(url)) return url;
     if (/^\/\//.test(url)) return `https:${url}`;
+    // Если это просто домен без протокола
+    if (/^[a-zA-Z0-9][a-zA-Z0-9-]*\.[a-zA-Z]{2,}/.test(url)) {
+      return `https://${url}`;
+    }
     return `https://${url.replace(/^\/*/, '')}`;
   }
 
@@ -177,26 +184,103 @@
     return 'data:image/svg+xml;charset=utf-8,' + encodeURIComponent(svg);
   }
 
+  // ===== ИСПРАВЛЕННАЯ ФУНКЦИЯ QR =====
   function qrNode(text) {
+    const container = document.createElement('div');
+    container.style.width = '100%';
+    container.style.height = '100%';
+    container.style.display = 'flex';
+    container.style.alignItems = 'center';
+    container.style.justifyContent = 'center';
+    container.style.background = '#ffffff';
+    container.style.borderRadius = '4px';
+    container.style.overflow = 'hidden';
+    
+    const qrText = String(text || 'https://example.com').trim();
+    if (!qrText) {
+      container.textContent = 'Enter QR text';
+      return container;
+    }
+    
+    // Пробуем использовать QRCodeStyling
     if (window.QRCodeStyling) {
       try {
-        const container = document.createElement('div');
+        const qrContainer = document.createElement('div');
+        qrContainer.style.width = '90%';
+        qrContainer.style.height = '90%';
+        qrContainer.style.display = 'flex';
+        qrContainer.style.alignItems = 'center';
+        qrContainer.style.justifyContent = 'center';
+        
         const qr = new window.QRCodeStyling({
-          width: 256, height: 256, type: 'svg', data: String(text || ''),
-          dotsOptions: { color: '#000000', type: 'rounded' },
-          backgroundOptions: { color: 'transparent' }
+          width: 256,
+          height: 256,
+          type: 'svg',
+          data: qrText,
+          dotsOptions: {
+            color: '#000000',
+            type: 'rounded'
+          },
+          backgroundOptions: {
+            color: '#ffffff'
+          },
+          cornersSquareOptions: {
+            color: '#000000',
+            type: 'extra-rounded'
+          },
+          cornersDotOptions: {
+            color: '#000000',
+            type: 'dot'
+          },
+          imageOptions: {
+            crossOrigin: 'anonymous',
+            margin: 0
+          }
         });
-        qr.append(container);
+        qr.append(qrContainer);
+        container.appendChild(qrContainer);
         return container;
-      } catch(e) {}
+      } catch(e) {
+        console.warn('QRCodeStyling error:', e);
+        // Падаем через API
+      }
     }
-    const img = document.createElement('img');
-    img.src = `https://api.qrserver.com/v1/create-qr-code/?size=256x256&data=${encodeURIComponent(String(text || ''))}`;
-    img.alt = 'QR';
-    img.style.width = '100%';
-    img.style.height = '100%';
-    img.style.objectFit = 'contain';
-    return img;
+    
+    // Fallback: используем API
+    try {
+      const img = document.createElement('img');
+      img.style.width = '80%';
+      img.style.height = '80%';
+      img.style.objectFit = 'contain';
+      img.style.background = '#ffffff';
+      img.style.padding = '10px';
+      img.style.borderRadius = '4px';
+      // Используем API для генерации QR
+      img.src = `https://api.qrserver.com/v1/create-qr-code/?size=300x300&data=${encodeURIComponent(qrText)}&bgcolor=ffffff&color=000000&margin=10`;
+      img.alt = 'QR Code';
+      img.crossOrigin = 'anonymous';
+      img.onerror = () => {
+        // Если API не работает, показываем текст
+        container.innerHTML = '';
+        container.textContent = qrText;
+        container.style.fontSize = '14px';
+        container.style.wordBreak = 'break-all';
+        container.style.padding = '10px';
+        container.style.background = 'rgba(0,0,0,.1)';
+        container.style.color = '#000';
+      };
+      container.appendChild(img);
+      return container;
+    } catch(e) {
+      console.warn('QR API error:', e);
+      container.textContent = qrText;
+      container.style.fontSize = '14px';
+      container.style.wordBreak = 'break-all';
+      container.style.padding = '10px';
+      container.style.background = 'rgba(0,0,0,.1)';
+      container.style.color = '#000';
+      return container;
+    }
   }
 
   function getTimerRemaining(obj) {
@@ -329,13 +413,19 @@
       case 'image': {
         const img = document.createElement('img');
         img.className = 'asset-content-image';
+        // Используем src напрямую, normalizeUrl уже обработал
         img.src = obj.src || createPlaceholderDataUrl('IMAGE');
         img.alt = obj.name || 'image';
         img.draggable = false;
+        img.crossOrigin = 'anonymous';
         img.referrerPolicy = 'no-referrer';
         img.style.width = '100%';
         img.style.height = '100%';
         img.style.objectFit = 'contain';
+        img.onerror = function() {
+          // Если изображение не загрузилось, показываем placeholder
+          this.src = createPlaceholderDataUrl('IMAGE');
+        };
         inner.appendChild(img);
         break;
       }
@@ -355,7 +445,10 @@
       }
         
       case 'qr': {
-        inner.appendChild(qrNode(obj.qrText || obj.text || obj.src || ''));
+        // QR-код создаётся через qrNode
+        const qrContainer = qrNode(obj.qrText || obj.text || obj.src || '');
+        qrContainer.className = 'asset-content-qr';
+        inner.appendChild(qrContainer);
         break;
       }
         
@@ -388,6 +481,16 @@
   }
 
   function updateAssetContent(obj, inner) {
+    // Сначала проверяем, есть ли у нас QR-контейнер, который нужно обновить
+    const qrContainer = inner.querySelector('.asset-content-qr');
+    if (qrContainer && obj.type === 'qr') {
+      // Пересоздаём QR
+      const newQr = qrNode(obj.qrText || obj.text || obj.src || '');
+      newQr.className = 'asset-content-qr';
+      inner.replaceChild(newQr, qrContainer);
+      return;
+    }
+    
     const textEl = inner.querySelector('.asset-content-text');
     if (textEl) {
       textEl.textContent = obj.text || 'Text';
@@ -656,7 +759,12 @@
       common.width = opts.width || 420; common.height = opts.height || 240;
       common.bg = opts.bg || 'rgba(123,44,191,.85)'; common.borderColor = opts.borderColor || '#39ff14';
     } else if (type === 'image') {
-      common.src = opts.src || prompt('Image URL (blank for placeholder):', '') || createPlaceholderDataUrl('IMAGE');
+      const imgUrl = prompt('Image URL:', 'https://example.com/image.jpg');
+      if (imgUrl) {
+        common.src = normalizeUrl(imgUrl);
+      } else {
+        common.src = createPlaceholderDataUrl('IMAGE');
+      }
       common.width = opts.width || 520; common.height = opts.height || 300;
     } else if (type === 'video' || type === 'browser') {
       common.src = opts.src || prompt('URL (YouTube/Twitch/any):', 'https://www.youtube.com/watch?v=dQw4w9WgXcQ') || 'about:blank';
@@ -665,6 +773,7 @@
       common.qrText = opts.text || prompt('QR text / URL:', location.href) || location.href;
       common.width = opts.width || 260; common.height = opts.height || 260;
       common.bg = '#fff'; common.borderColor = '#000';
+      common.text = common.qrText;
     } else if (type === 'timer') {
       const seconds = parseInt(prompt('Timer duration in seconds:', '3600') || '3600', 10);
       common.width = opts.width || 360; common.height = opts.height || 160;
@@ -779,8 +888,23 @@
     });
   }
 
-  function addImageFile(file) { if (!file) return; const reader = new FileReader(); reader.onload = () => createObjectByType('image', { src: String(reader.result || '') }); reader.readAsDataURL(file); }
-  function addImageUrl() { const url = prompt('Image URL:', 'https://'); if (url) createObjectByType('image', { src: url.startsWith('data:') ? url : normalizeUrl(url) }); }
+  function addImageFile(file) { 
+    if (!file) return; 
+    const reader = new FileReader(); 
+    reader.onload = function(e) {
+      createObjectByType('image', { src: e.target.result });
+    }; 
+    reader.readAsDataURL(file); 
+  }
+
+  // ===== ИСПРАВЛЕННАЯ addImageUrl =====
+  function addImageUrl() { 
+    const url = prompt('Image URL:', 'https://example.com/image.jpg'); 
+    if (url) {
+      const normalized = normalizeUrl(url);
+      createObjectByType('image', { src: normalized });
+    }
+  }
 
   function updateSelectedFromInputs() {
     const obj = state.objects[[...state.selected][0]]; 
@@ -800,7 +924,7 @@
       obj.src = normalizeUrl(urlValue);
     }
     if (obj.type === 'qr') {
-      obj.qrText = textValue.trim();
+      obj.qrText = textValue.trim() || 'https://example.com';
       obj.text = obj.qrText;
     } else {
       obj.text = textValue;
@@ -1009,7 +1133,6 @@
     }
   }
 
-  // ===== ИСПРАВЛЕННАЯ onPointerMove - НЕ ОТПРАВЛЯЕМ НА СЕРВЕР ВО ВРЕМЯ ДВИЖЕНИЯ =====
   function onPointerMove(e) {
     if (state.role !== 'admin') return;
     const pt = screenToWorld(e.clientX, e.clientY);
@@ -1026,7 +1149,6 @@
         el.style.left = `${obj.left}px`;
         el.style.top = `${obj.top}px`;
       }
-      // НЕ отправляем на сервер во время движения!
       
     } else if (state.resize) {
       const obj = state.objects[state.resize.id];
@@ -1063,7 +1185,6 @@
         el.style.width = `${obj.width}px`;
         el.style.height = `${obj.height}px`;
       }
-      // НЕ отправляем на сервер во время движения!
       
     } else if (state.rotate) {
       const obj = state.objects[state.rotate.id];
@@ -1075,7 +1196,6 @@
       if (el) {
         el.style.transform = `rotate(${obj.angle}deg) scale(${obj.scaleX || 1}, ${obj.scaleY || 1})`;
       }
-      // НЕ отправляем на сервер во время движения!
       
     } else if (state.isPanning) {
       state.panX = state.panStart.panX + (e.clientX - state.panStart.x);
@@ -1113,7 +1233,6 @@
     }
   }
 
-  // ===== ИСПРАВЛЕННАЯ onPointerUp - ОТПРАВЛЯЕМ ТОЛЬКО ПРИ ОТПУСКАНИИ =====
   function onPointerUp() {
     if (state.role !== 'admin') return;
     selectionBox.style.display = 'none';
@@ -1122,7 +1241,6 @@
     state.selectionRect = null;
     viewport.style.cursor = 'default';
     
-    // Отправляем финальное состояние ТОЛЬКО при отпускании
     if (state.drag) {
       const obj = state.objects[state.drag.id];
       if (obj) {
@@ -1208,7 +1326,6 @@
     
     if (roomState.objects) {
       Object.values(roomState.objects).forEach(obj => {
-        // Если объект есть и мы сейчас перетаскиваем его - НЕ перезаписываем
         if (state._dragData && state._dragData.id === obj.id) {
           return;
         }
@@ -1406,7 +1523,7 @@
         const obj = state.objects[[...state.selected][0]];
         if (!obj) return;
         if (obj.type === 'qr') {
-          obj.qrText = textInput.value.trim();
+          obj.qrText = textInput.value.trim() || 'https://example.com';
           obj.text = obj.qrText;
         } else {
           obj.text = textInput.value;
@@ -1479,7 +1596,6 @@
 
   socket.on('element_updated', (obj) => {
     if (state._isLocalUpdate) return;
-    // Если сейчас перетаскиваем этот объект - игнорируем обновление с сервера
     if (state._dragData && state._dragData.id === obj.id) return;
     
     state.objects[obj.id] = normalizeObject({ ...(state.objects[obj.id] || {}), ...obj });
