@@ -17,7 +17,6 @@ const io = new Server(server, {
 const PORT = process.env.PORT || 3000;
 const DEFAULT_RESOLUTION = { w: 1920, h: 1080 };
 
-// ----- Middleware -----
 app.use(express.json({ limit: '12mb' }));
 app.use(express.urlencoded({ extended: true, limit: '12mb' }));
 app.use(cookieParser());
@@ -29,7 +28,7 @@ app.use(session({
 }));
 app.use(express.static(path.join(__dirname, 'public')));
 
-// ----- Пользователи -----
+// ---------- Пользователи ----------
 const USERS_FILE = path.join(__dirname, 'users.json');
 
 function hashPassword(pwd) {
@@ -49,14 +48,19 @@ function loadUsers() {
       }
     };
     fs.writeFileSync(USERS_FILE, JSON.stringify(defaultUsers, null, 2));
-    console.log(`✅ Создан пользователь: devmaks / ${streamerPassword}`);
+    console.log(`✅ Создан пользователь streamer: devmaks / ${streamerPassword}`);
     return defaultUsers;
   }
   try {
-    return JSON.parse(fs.readFileSync(USERS_FILE, 'utf8'));
+    const data = fs.readFileSync(USERS_FILE, 'utf8');
+    return JSON.parse(data);
   } catch(e) {
     return {};
   }
+}
+
+function saveUsers(users) {
+  fs.writeFileSync(USERS_FILE, JSON.stringify(users, null, 2));
 }
 
 let users = loadUsers();
@@ -82,7 +86,7 @@ function requireModerator(req, res, next) {
   res.status(403).json({ error: 'Необходима авторизация' });
 }
 
-// ----- Маршруты -----
+// ---------- Маршруты ----------
 app.get('/', (req, res) => {
   res.redirect('/login');
 });
@@ -144,7 +148,7 @@ app.post('/api/moderators', requireStreamer, (req, res) => {
   const plainPassword = generateRandomPassword(10);
   const passwordHash = hashPassword(plainPassword);
   users[username] = { username, passwordHash, plainPassword, role: 'moderator' };
-  fs.writeFileSync(USERS_FILE, JSON.stringify(users, null, 2));
+  saveUsers(users);
   res.json({ ok: true, username, password: plainPassword });
 });
 
@@ -153,7 +157,7 @@ app.delete('/api/moderators/:username', requireStreamer, (req, res) => {
   if (username === 'devmaks') return res.status(403).json({ error: 'Нельзя удалить главного стримера' });
   if (!users[username] || users[username].role !== 'moderator') return res.status(404).json({ error: 'Модератор не найден' });
   delete users[username];
-  fs.writeFileSync(USERS_FILE, JSON.stringify(users, null, 2));
+  saveUsers(users);
   for (let [sid, uname] of onlineUsers.entries()) {
     if (uname === username) {
       const sock = io.sockets.sockets.get(sid);
@@ -172,7 +176,7 @@ app.get('/api/moderators/:username/password', requireStreamer, (req, res) => {
   res.json({ password: user.plainPassword || 'Пароль не сохранён' });
 });
 
-// ----- Комнаты -----
+// ---------- Состояние комнат ----------
 const roomsState = {};
 
 function clone(v) { return JSON.parse(JSON.stringify(v)); }
@@ -194,6 +198,20 @@ function ensureRoom(room) {
     };
   }
   return roomsState[name];
+}
+
+function log(room, actor, message) {
+  const state = ensureRoom(room);
+  const entry = { 
+    id: `${Date.now().toString(36)}_${Math.random().toString(36).slice(2,7)}`, 
+    ts: Date.now(), 
+    actor: String(actor || 'system'), 
+    message: String(message || '') 
+  };
+  state.meta.logs.unshift(entry);
+  state.meta.logs = state.meta.logs.slice(0, 50);
+  io.to(String(room)).emit('log_added', entry);
+  return entry;
 }
 
 function normalizeUrl(input) {
@@ -241,6 +259,9 @@ function normalizeObject(input) {
   o.muted = !!o.muted;
   o.volume = Math.min(1, Math.max(0, Number(o.volume) || 1));
   o.playing = !!o.playing;
+  o.stopwatchRunning = !!o.stopwatchRunning;
+  o.stopwatchStart = Number(o.stopwatchStart) || 0;
+  o.stopwatchElapsed = Number(o.stopwatchElapsed) || 0;
   if (o.type === 'timer') {
     o.timerDuration = Math.max(0, Number(o.timerDuration) || 300000);
     o.timerStatus = ['running','paused','stopped'].includes(o.timerStatus) ? o.timerStatus : 'stopped';
@@ -254,7 +275,50 @@ function broadcastRoomState(room) {
   io.to(String(room)).emit('room_state', clone(ensureRoom(room))); 
 }
 
-// ----- Socket.IO -----
+// ===== ИСПРАВЛЕННАЯ ФУНКЦИЯ МАСШТАБИРОВАНИЯ =====
+function scaleObjectsForResolution(state, nextRes) {
+  const prev = state.meta.resolution || DEFAULT_RESOLUTION;
+  const rx = nextRes.w / prev.w;
+  const ry = nextRes.h / prev.h;
+  const liveHeight = prev.h;
+  const newLiveHeight = nextRes.h;
+  
+  Object.values(state.objects).forEach(o => {
+    // Масштабируем позицию по X
+    o.left = Math.round(o.left * rx);
+    
+    // Определяем, в какой зоне объект
+    const wasInLive = o.top < liveHeight;
+    
+    if (wasInLive) {
+      // Объект в live зоне - масштабируем относительно live
+      o.top = Math.round(o.top * ry);
+    } else {
+      // Объект в staging зоне - масштабируем относительно staging
+      const offsetInStaging = o.top - liveHeight;
+      o.top = Math.round(newLiveHeight + (offsetInStaging * ry));
+    }
+    
+    // Масштабируем размеры
+    o.width = Math.max(16, Math.round(o.width * rx));
+    o.height = Math.max(16, Math.round(o.height * ry));
+    
+    // Масштабируем шрифт
+    if (typeof o.fontSize === 'number') {
+      o.fontSize = Math.max(8, Math.round(o.fontSize * Math.min(rx, ry)));
+    }
+    // Масштабируем обводку
+    if (typeof o.borderWidth === 'number') {
+      o.borderWidth = Math.max(1, Math.round(o.borderWidth * Math.min(rx, ry)));
+    }
+    // Масштабируем радиус
+    if (typeof o.radius === 'number') {
+      o.radius = Math.max(2, Math.round(o.radius * Math.min(rx, ry)));
+    }
+  });
+}
+
+// ---------- Socket.IO ----------
 io.on('connection', (socket) => {
   console.log('🔌 Клиент подключился:', socket.id);
   let currentUser = null;
@@ -276,7 +340,8 @@ io.on('connection', (socket) => {
     currentRoom = room;
     socket.join(room);
     console.log(`🏠 Клиент ${socket.id} присоединился к комнате: ${room}`);
-    socket.emit('room_state', clone(ensureRoom(room)));
+    const state = ensureRoom(room);
+    socket.emit('room_state', clone(state));
     if (typeof ack === 'function') ack({ ok: true, room });
   });
 
@@ -293,7 +358,8 @@ io.on('connection', (socket) => {
     const obj = normalizeObject(payload);
     state.objects[obj.id] = obj;
     io.to(room).emit('element_added', clone(obj));
-    if (typeof ack === 'function') ack({ ok: true });
+    log(room, currentUser, `Spawned ${String(obj.type).toUpperCase()}`);
+    if (typeof ack === 'function') ack({ ok: true, object: clone(obj) });
   });
 
   socket.on('update_element', (payload, ack) => {
@@ -301,10 +367,14 @@ io.on('connection', (socket) => {
     const room = currentRoom;
     const state = ensureRoom(room);
     const id = String(payload.id || '');
-    if (!state.objects[id]) return;
-    state.objects[id] = normalizeObject({ ...state.objects[id], ...payload, id });
-    io.to(room).emit('element_updated', clone(state.objects[id]));
-    if (typeof ack === 'function') ack({ ok: true });
+    if (!state.objects[id]) {
+      if (typeof ack === 'function') ack({ ok: false, error: 'not_found' });
+      return;
+    }
+    const merged = normalizeObject({ ...state.objects[id], ...payload, id });
+    state.objects[id] = merged;
+    io.to(room).emit('element_updated', clone(merged));
+    if (typeof ack === 'function') ack({ ok: true, object: clone(merged) });
   });
 
   socket.on('remove_element', (payload, ack) => {
@@ -315,8 +385,9 @@ io.on('connection', (socket) => {
     if (state.objects[id]) {
       delete state.objects[id];
       io.to(room).emit('element_removed', { id });
+      log(room, currentUser, 'Deleted element');
+      if (typeof ack === 'function') ack({ ok: true });
     }
-    if (typeof ack === 'function') ack({ ok: true });
   });
 
   socket.on('clear_canvas', (payload, ack) => {
@@ -325,6 +396,131 @@ io.on('connection', (socket) => {
     const state = ensureRoom(room);
     state.objects = {};
     io.to(room).emit('canvas_cleared', {});
+    log(room, currentUser, 'Cleared canvas');
+    if (typeof ack === 'function') ack({ ok: true });
+  });
+
+  socket.on('set_resolution', (payload, ack) => {
+    if (!canModify()) return;
+    const room = currentRoom;
+    const state = ensureRoom(room);
+    const nextRes = { 
+      w: Math.max(640, Math.round(payload.w || 1920)), 
+      h: Math.max(360, Math.round(payload.h || 1080)) 
+    };
+    scaleObjectsForResolution(state, nextRes);
+    state.meta.resolution = nextRes;
+    broadcastRoomState(room);
+    log(room, currentUser, `Resolution changed to ${nextRes.w}x${nextRes.h}`);
+    if (typeof ack === 'function') ack({ ok: true, resolution: nextRes });
+  });
+
+  socket.on('set_layer', (payload, ack) => {
+    if (!canModify()) return;
+    const room = currentRoom;
+    const state = ensureRoom(room);
+    state.meta.currentLayer = String(payload.layer || '1');
+    io.to(room).emit('meta_updated', clone(state.meta));
+    if (typeof ack === 'function') ack({ ok: true });
+  });
+
+  socket.on('save_scene', (payload, ack) => {
+    if (!canModify()) return;
+    const room = currentRoom;
+    const state = ensureRoom(room);
+    const name = String(payload.name || '').trim();
+    if (!name) return;
+    state.meta.scenes[name] = { 
+      name, 
+      resolution: clone(state.meta.resolution), 
+      objects: clone(state.objects), 
+      createdAt: Date.now() 
+    };
+    io.to(room).emit('meta_updated', clone(state.meta));
+    log(room, currentUser, `Saved scene "${name}"`);
+    if (typeof ack === 'function') ack({ ok: true });
+  });
+
+  socket.on('load_scene', (payload, ack) => {
+    if (!canModify()) return;
+    const room = currentRoom;
+    const state = ensureRoom(room);
+    const name = String(payload.name || '').trim();
+    const scene = state.meta.scenes[name];
+    if (!scene) return;
+    state.meta.resolution = clone(scene.resolution);
+    state.objects = {};
+    Object.values(scene.objects || {}).forEach(o => { state.objects[o.id] = normalizeObject(o); });
+    broadcastRoomState(room);
+    log(room, currentUser, `Loaded scene "${name}"`);
+    if (typeof ack === 'function') ack({ ok: true });
+  });
+
+  socket.on('save_preset', (payload, ack) => {
+    if (!canModify()) return;
+    const room = currentRoom;
+    const state = ensureRoom(room);
+    const name = String(payload.name || '').trim();
+    if (!name) return;
+    state.meta.presets[name] = { name, objects: clone(state.objects), createdAt: Date.now() };
+    io.to(room).emit('meta_updated', clone(state.meta));
+    log(room, currentUser, `Saved preset "${name}"`);
+    if (typeof ack === 'function') ack({ ok: true });
+  });
+
+  socket.on('load_preset', (payload, ack) => {
+    if (!canModify()) return;
+    const room = currentRoom;
+    const state = ensureRoom(room);
+    const name = String(payload.name || '').trim();
+    const preset = state.meta.presets[name];
+    if (!preset) return;
+    state.objects = {};
+    Object.values(preset.objects || {}).forEach(o => { state.objects[o.id] = normalizeObject(o); });
+    broadcastRoomState(room);
+    log(room, currentUser, `Loaded preset "${name}"`);
+    if (typeof ack === 'function') ack({ ok: true });
+  });
+
+  socket.on('save_sound', (payload, ack) => {
+    if (!canModify()) return;
+    const room = currentRoom;
+    const state = ensureRoom(room);
+    const name = String(payload.name || 'Sound').trim() || 'Sound';
+    const url = normalizeUrl(payload.url || '');
+    if (!url) return;
+    const sound = { 
+      id: `${Date.now().toString(36)}_${Math.random().toString(36).slice(2,7)}`, 
+      name, url, volume: 1 
+    };
+    state.meta.sounds.push(sound);
+    io.to(room).emit('meta_updated', clone(state.meta));
+    log(room, currentUser, `Added sound "${name}"`);
+    if (typeof ack === 'function') ack({ ok: true });
+  });
+
+  socket.on('remove_sound', (payload, ack) => {
+    if (!canModify()) return;
+    const room = currentRoom;
+    const state = ensureRoom(room);
+    const id = String(payload.id || '');
+    state.meta.sounds = state.meta.sounds.filter(s => s.id !== id);
+    io.to(room).emit('meta_updated', clone(state.meta));
+    if (typeof ack === 'function') ack({ ok: true });
+  });
+
+  socket.on('play_sound', (payload, ack) => {
+    const room = currentRoom;
+    const state = ensureRoom(room);
+    const id = String(payload.id || '');
+    const sound = state.meta.sounds.find(s => s.id === id);
+    if (sound) io.to(room).emit('sound_play', clone(sound));
+    if (typeof ack === 'function') ack({ ok: !!sound });
+  });
+
+  socket.on('stop_sounds', (payload, ack) => {
+    const room = currentRoom;
+    io.to(room).emit('sounds_stop', {});
     if (typeof ack === 'function') ack({ ok: true });
   });
 
