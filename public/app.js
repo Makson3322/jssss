@@ -76,6 +76,7 @@
     }, 1000);
   }
 
+  // ===== ИСПРАВЛЕННАЯ ФУНКЦИЯ applyView =====
   function applyView() {
     document.documentElement.style.setProperty('--worldW', `${state.resolution.w}px`);
     document.documentElement.style.setProperty('--worldH', `${currentWorldHeight()}px`);
@@ -124,7 +125,8 @@
       radius: 10, fontSize: 42, fontWeight: 700, align: 'center',
       timerMode: 'down', timerDuration: 300000, timerStatus: 'stopped',
       timerRemaining: 300000, endsAt: null, items: [], activeIndex: 0, data: {},
-      stopwatchRunning: false, stopwatchStart: 0, stopwatchElapsed: 0
+      stopwatchRunning: false, stopwatchStart: 0, stopwatchElapsed: 0,
+      muted: false, volume: 1, playing: false
     };
     const obj = Object.assign(base, o || {});
     obj.type = String(obj.type || 'text');
@@ -153,6 +155,9 @@
     obj.items = Array.isArray(obj.items) ? obj.items : [];
     obj.data = (obj.data && typeof obj.data === 'object') ? obj.data : {};
     obj.qrText = String(obj.qrText ?? obj.text ?? obj.src ?? '');
+    obj.muted = !!obj.muted;
+    obj.volume = Math.max(0, Math.min(1, Number(obj.volume ?? 1)));
+    obj.playing = !!obj.playing;
     if (obj.type === 'timer') {
       obj.timerDuration = Math.max(0, Number(obj.timerDuration || 300000));
       obj.timerStatus = ['running','paused','stopped'].includes(obj.timerStatus) ? obj.timerStatus : 'stopped';
@@ -628,7 +633,9 @@
       bg: opts.bg || 'rgba(123,44,191,.2)', borderColor: opts.borderColor || '#7b2cbf',
       borderWidth: opts.borderWidth ?? 2, radius: opts.radius ?? 12, fontSize: opts.fontSize ?? 36,
       fontWeight: opts.fontWeight ?? 800, align: opts.align || 'center', data: opts.data || {},
-      items: opts.items || [], zIndex: Date.now() % 100000
+      items: opts.items || [], zIndex: Date.now() % 100000,
+      stopwatchRunning: false, stopwatchStart: 0, stopwatchElapsed: 0,
+      muted: false, volume: 1, playing: false
     };
     
     if (type === 'text') {
@@ -714,12 +721,15 @@
     renderSelection();
   }
 
+  // ===== ИСПРАВЛЕННАЯ ФУНКЦИЯ renderObject =====
   function renderObject(obj) {
     if (!obj || !obj.visible) return;
+    // В OBS показываем ТОЛЬКО объекты в live зоне (top < resolution.h)
     if (state.role === 'obs' && obj.top >= state.resolution.h) return;
     buildAssetElement(obj);
   }
 
+  // ===== ИСПРАВЛЕННАЯ ФУНКЦИЯ renderAll =====
   function renderAll() {
     if (!world) return;
     world.querySelectorAll('.asset').forEach(el => { 
@@ -730,6 +740,7 @@
         delete state._iframeCache[id];
         return;
       }
+      // В OBS удаляем объекты вне live зоны
       if (state.role === 'obs' && obj.top >= state.resolution.h) {
         el.remove();
         delete state._iframeCache[id];
@@ -925,7 +936,6 @@
       if (!obj || obj.locked) return;
       selectOnly(id);
       
-      // ===== ОБРАБОТКА ХЕНДЛОВ =====
       if (['br','tl','tr','bl'].includes(handle.dataset.handle)) {
         state.resize = {
           id,
